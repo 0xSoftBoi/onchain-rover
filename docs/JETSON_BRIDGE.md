@@ -12,8 +12,8 @@ COURIER (mobile).
    laptop (operator) ──────────┼──────────────────────────────┐
                                │                              │
 ┌── JETSON (each robot) ───────┴────────────┐   ┌─ LAPTOP ────┴───────────┐
-│ robot/api.py   FastAPI :8000  (LAN only)  │   │ sidecar/  Express :4021 │
-│   wraps rover.py + agent.py               │◄──┤   x402 Gateway middleware│
+│ robot-harness Rust :8000  (LAN only)      │   │ sidecar/  Express :4021 │
+│   owns motors, sensors, camera hooks       │◄──┤   x402 Gateway middleware│
 │   owns /dev/ttyTHS1 + /dev/video0         │   │   (PUBLIC paid surface)  │
 │ ollama :11434 (gemma3:1b planner)         │   │ web/      Next.js :3000 │
 │ piper-tts (voice), ggwave (GibberLink)    │   └─────────────────────────┘
@@ -61,11 +61,18 @@ COURIER (mobile).
 
 ## Interface contract (the two-builder boundary — frozen)
 
-Robot FastAPI exposes (each robot):
+Rust rover server exposes (each robot):
+`GET /capabilities` · `GET /health` · `GET /telemetry` · `GET /sensors` ·
+`GET /camera/status` · `GET /camera/snapshot` · `GET /stream` ·
+`POST /pilot/authorize` · `POST /pilot/speed-mode` · `POST /drive` ·
+`POST /motors/drive` · `POST /motors/stop` · `POST /estop` ·
+`POST /estop/reset` · `WS /ws/drive` · `WS /ws/telemetry`
+
+Legacy Python FastAPI may still expose:
 `POST /seek {target}` · `POST /capture` → jpg+sha256 · `POST /verify-photo` →
 Gemini verdict · `POST /store-proof` → Walrus blobId · `POST /gibber/send` /
 `GET /gibber/recv` · `POST /worldid/verify` → {ok,nullifier} · `POST /say` ·
-`POST /admit` / `POST /deny` (LED+OLED+voice) · `GET /health` (battery, serial ok)
+`POST /admit` / `POST /deny` (LED+OLED+voice)
 
 Node sidecar exposes:
 `POST /pay {from,to,amt}` → tx (x402 Gateway) · `POST /mint-pass {to}` ·
@@ -88,10 +95,11 @@ locked 90-second demo by calling both APIs.
 ## Autostart / recovery
 
 - Robot A already has `~/ugv_jetson/start_ugv_web.sh` + `@reboot` cron (setsid).
-  Replace its target with `robot/api.py` for the event (stock web UI and our
-  stack cannot run together — serial+camera contention).
+  Replace its target with `robot-harness` for the event (stock web UI, Python
+  API, and Rust stack cannot all own serial/camera at once).
 - Hard-stop: `{"T":0}` + `drive(0,0)`; geofence via wheel odometry (odl/odr) in
-  `api.py`; speed cap 0.4 enforced in `agent.py` primitives.
+  the Rust telemetry contract; speed caps and deadman are enforced by
+  `robot-harness`.
 
 ## Robot B provisioning checklist (clone of A, ~30 min)
 

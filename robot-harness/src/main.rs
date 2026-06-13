@@ -14,7 +14,7 @@ use axum::{
         State, WebSocketUpgrade,
     },
     http::StatusCode,
-    response::{IntoResponse, Response},
+    response::{IntoResponse, Redirect, Response},
     routing::{get, post},
     Json, Router,
 };
@@ -53,6 +53,15 @@ struct Opts {
 
     #[arg(long, env = "ROVER_DEADMAN_MS", default_value_t = DEFAULT_DEADMAN_MS)]
     deadman_ms: u64,
+
+    #[arg(long, env = "ROVER_CAMERA_DEVICE")]
+    camera_device: Option<String>,
+
+    #[arg(long, env = "ROVER_CAMERA_STREAM_URL")]
+    camera_stream_url: Option<String>,
+
+    #[arg(long, env = "ROVER_CAMERA_SNAPSHOT_URL")]
+    camera_snapshot_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -91,6 +100,9 @@ struct RawTelemetry {
     odometry_left: Option<f64>,
     odometry_right: Option<f64>,
     yaw: Option<f64>,
+    accel: Option<[f64; 3]>,
+    gyro: Option<[f64; 3]>,
+    mag: Option<[f64; 3]>,
     source: &'static str,
     last_raw_frame_ms: Option<u128>,
 }
@@ -144,7 +156,32 @@ struct TelemetryFrame {
     speed_mode: SpeedMode,
     max_speed: f64,
     last_raw_frame_ms: Option<u128>,
+    camera: CameraStatus,
+    lidar: SensorAvailability,
+    imu: ImuStatus,
     source: &'static str,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct CameraStatus {
+    status: &'static str,
+    device: Option<String>,
+    stream_url: Option<String>,
+    snapshot_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct SensorAvailability {
+    status: &'static str,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ImuStatus {
+    status: &'static str,
+    accel: Option<[f64; 3]>,
+    gyro: Option<[f64; 3]>,
+    mag: Option<[f64; 3]>,
+    yaw: Option<f64>,
 }
 
 trait RoverControl: Send + Sync {
@@ -165,7 +202,7 @@ impl RoverControl for SimRover {
 }
 
 struct SerialRover {
-    writer: Mutex<Box<dyn serialport::SerialPort>>,
+    writer: Arc<Mutex<Box<dyn serialport::SerialPort>>>,
 }
 
 impl SerialRover {
@@ -181,6 +218,9 @@ impl SerialRover {
         let mut reader = port
             .try_clone()
             .with_context(|| format!("clone serial port reader for {port_path}"))?;
+
+        let writer = Arc::new(Mutex::new(port));
+        let request_writer = writer.clone();
 
         thread::spawn(move || {
             let mut line = Vec::with_capacity(512);
@@ -212,9 +252,28 @@ impl SerialRover {
             }
         });
 
-        Ok(Arc::new(Self {
-            writer: Mutex::new(port),
-        }))
+        thread::spawn(move || {
+            let mut tick = 0_u64;
+            loop {
+                let request = if tick % 10 == 0 {
+                    json!({"T": 126}).to_string()
+                } else {
+                    json!({"T": 130}).to_string()
+                } + "\n";
+                {
+                    let mut writer = request_writer.lock();
+                    if let Err(err) = writer.write_all(request.as_bytes()) {
+                        warn!(?err, "serial telemetry request failed");
+                    } else if let Err(err) = writer.flush() {
+                        warn!(?err, "serial telemetry request flush failed");
+                    }
+                }
+                tick = tick.wrapping_add(1);
+                thread::sleep(Duration::from_millis(100));
+            }
+        });
+
+        Ok(Arc::new(Self { writer }))
     }
 }
 
@@ -243,6 +302,9 @@ struct AppState {
     telemetry_tx: broadcast::Sender<TelemetryFrame>,
     allow_untokened_drive: bool,
     deadman_ms: u64,
+    camera_device: Option<String>,
+    camera_stream_url: Option<String>,
+    camera_snapshot_url: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -297,6 +359,38 @@ struct HealthResp {
     deadman_ms: u64,
 }
 
+#[derive(Debug, Serialize)]
+struct CapabilitiesResp {
+    ok: bool,
+    role: String,
+    mode: String,
+    serial_port: String,
+    deadman_ms: u64,
+    allow_untokened_drive: bool,
+    camera: CameraStatus,
+    endpoints: Vec<&'static str>,
+}
+
+#[derive(Debug, Serialize)]
+struct SensorsResp {
+    ok: bool,
+    role: String,
+    ts_ms: u128,
+    source: &'static str,
+    battery_v: Option<f64>,
+    odometry: OdometryStatus,
+    imu: ImuStatus,
+    lidar: SensorAvailability,
+    camera: CameraStatus,
+    last_raw_frame_ms: Option<u128>,
+}
+
+#[derive(Debug, Serialize)]
+struct OdometryStatus {
+    left: Option<f64>,
+    right: Option<f64>,
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
@@ -331,6 +425,9 @@ async fn main() -> Result<()> {
         telemetry_tx,
         allow_untokened_drive: opts.allow_untokened_drive,
         deadman_ms: opts.deadman_ms,
+        camera_device: opts.camera_device,
+        camera_stream_url: opts.camera_stream_url,
+        camera_snapshot_url: opts.camera_snapshot_url,
     };
 
     spawn_deadman(state.clone());
@@ -340,9 +437,18 @@ async fn main() -> Result<()> {
     }
 
     let app = Router::new()
+        .route("/capabilities", get(capabilities))
         .route("/health", get(health))
+        .route("/telemetry", get(telemetry))
+        .route("/sensors", get(sensors))
         .route("/stop", post(stop))
+        .route("/estop", post(estop))
+        .route("/estop/reset", post(estop_reset))
         .route("/drive", post(drive))
+        .route("/motors/drive", post(drive))
+        .route("/motors/stop", post(motors_stop))
+        .route("/camera/status", get(camera_status))
+        .route("/camera/snapshot", get(camera_snapshot))
         .route("/pilot/authorize", post(pilot_authorize))
         .route("/pilot/speed-mode", post(pilot_speed_mode))
         .route("/stream", get(stream))
@@ -369,13 +475,43 @@ async fn shutdown_signal(state: AppState) {
     }
 }
 
+async fn capabilities(State(state): State<AppState>) -> Json<CapabilitiesResp> {
+    Json(CapabilitiesResp {
+        ok: true,
+        role: state.role.clone(),
+        mode: mode_name(state.mode).to_string(),
+        serial_port: state.serial_port.clone(),
+        deadman_ms: state.deadman_ms,
+        allow_untokened_drive: state.allow_untokened_drive,
+        camera: camera_status_for(&state),
+        endpoints: vec![
+            "GET /capabilities",
+            "GET /health",
+            "GET /telemetry",
+            "GET /sensors",
+            "GET /camera/status",
+            "GET /camera/snapshot",
+            "GET /stream",
+            "POST /pilot/authorize",
+            "POST /pilot/speed-mode",
+            "POST /drive",
+            "POST /motors/drive",
+            "POST /motors/stop",
+            "POST /estop",
+            "POST /estop/reset",
+            "WS /ws/drive",
+            "WS /ws/telemetry",
+        ],
+    })
+}
+
 async fn health(State(state): State<AppState>) -> Json<HealthResp> {
     let raw = state.raw.read().clone();
     let command = state.command.lock().clone();
     Json(HealthResp {
         ok: true,
         role: state.role,
-        mode: format!("{:?}", state.mode).to_lowercase(),
+        mode: mode_name(state.mode).to_string(),
         serial_port: state.serial_port,
         uptime_secs: state.started_at.elapsed().as_secs(),
         battery_v: raw.battery_v,
@@ -385,17 +521,68 @@ async fn health(State(state): State<AppState>) -> Json<HealthResp> {
     })
 }
 
+async fn telemetry(State(state): State<AppState>) -> Json<TelemetryFrame> {
+    Json(current_telemetry_frame(&state))
+}
+
+async fn sensors(State(state): State<AppState>) -> Json<SensorsResp> {
+    let raw = state.raw.read().clone();
+    Json(SensorsResp {
+        ok: true,
+        role: state.role.clone(),
+        ts_ms: now_ms(),
+        source: raw.source,
+        battery_v: raw.battery_v,
+        odometry: OdometryStatus {
+            left: raw.odometry_left,
+            right: raw.odometry_right,
+        },
+        imu: imu_status_for(&raw),
+        lidar: SensorAvailability {
+            status: "unavailable",
+        },
+        camera: camera_status_for(&state),
+        last_raw_frame_ms: raw.last_raw_frame_ms,
+    })
+}
+
 async fn stop(State(state): State<AppState>) -> Result<Json<Value>, AppError> {
+    estop_inner(&state)?;
+    Ok(Json(json!({"stopped": true, "estop": true})))
+}
+
+async fn estop(State(state): State<AppState>) -> Result<Json<Value>, AppError> {
+    estop_inner(&state)?;
+    Ok(Json(json!({"ok": true, "estop": true})))
+}
+
+async fn motors_stop(State(state): State<AppState>) -> Result<Json<Value>, AppError> {
     state.rover.stop()?;
     let mut command = state.command.lock();
     command.left_cmd = 0.0;
     command.right_cmd = 0.0;
-    command.estop = true;
+    command.active_session_id = None;
     command.stopped_by_deadman = false;
-    Ok(Json(json!({"stopped": true})))
+    Ok(Json(
+        json!({"ok": true, "stopped": true, "estop": command.estop}),
+    ))
+}
+
+async fn estop_reset(State(state): State<AppState>) -> Result<Json<Value>, AppError> {
+    state.rover.stop()?;
+    let mut command = state.command.lock();
+    command.left_cmd = 0.0;
+    command.right_cmd = 0.0;
+    command.active_session_id = None;
+    command.estop = false;
+    command.stopped_by_deadman = false;
+    Ok(Json(json!({"ok": true, "estop": false})))
 }
 
 async fn stream(State(state): State<AppState>) -> Response {
+    if let Some(url) = &state.camera_stream_url {
+        return Redirect::temporary(url).into_response();
+    }
     let raw = state.raw.read().clone();
     let command = state.command.lock().clone();
     let svg = format!(
@@ -425,6 +612,17 @@ async fn stream(State(state): State<AppState>) -> Response {
         right = format!("{:.2}", command.right_cmd),
     );
     ([(axum::http::header::CONTENT_TYPE, "image/svg+xml")], svg).into_response()
+}
+
+async fn camera_status(State(state): State<AppState>) -> Json<CameraStatus> {
+    Json(camera_status_for(&state))
+}
+
+async fn camera_snapshot(State(state): State<AppState>) -> Response {
+    if let Some(url) = &state.camera_snapshot_url {
+        return Redirect::temporary(url).into_response();
+    }
+    stream(State(state)).await
 }
 
 async fn pilot_authorize(
@@ -673,30 +871,7 @@ fn spawn_telemetry_loop(state: AppState) {
         let mut interval = time::interval(Duration::from_millis(1000 / TELEMETRY_HZ));
         loop {
             interval.tick().await;
-            let raw = state.raw.read().clone();
-            let command = state.command.lock().clone();
-            let deadman_ok = command
-                .last_cmd_at
-                .map(|last| last.elapsed() <= Duration::from_millis(state.deadman_ms))
-                .unwrap_or(true);
-            let frame = TelemetryFrame {
-                ts_ms: now_ms(),
-                robot: state.role.clone(),
-                battery_v: raw.battery_v,
-                left_cmd: command.left_cmd,
-                right_cmd: command.right_cmd,
-                odometry_left: raw.odometry_left,
-                odometry_right: raw.odometry_right,
-                yaw: raw.yaw,
-                session_id: command.active_session_id,
-                deadman_ok,
-                estop: command.estop,
-                stopped_by_deadman: command.stopped_by_deadman,
-                speed_mode: command.speed_mode,
-                max_speed: command.speed_mode.cap(),
-                last_raw_frame_ms: raw.last_raw_frame_ms,
-                source: raw.source,
-            };
+            let frame = current_telemetry_frame(&state);
             let _ = state.telemetry_tx.send(frame);
         }
     });
@@ -719,11 +894,92 @@ fn spawn_sim_telemetry_loop(state: AppState) {
                 odometry_left: Some(round3(odl)),
                 odometry_right: Some(round3(odr)),
                 yaw: Some(round3(yaw)),
+                accel: Some([0.0, 0.0, 9.8]),
+                gyro: Some([0.0, 0.0, round3(yaw)]),
+                mag: None,
                 source: "sim",
                 last_raw_frame_ms: Some(now_ms()),
             };
         }
     });
+}
+
+fn current_telemetry_frame(state: &AppState) -> TelemetryFrame {
+    let raw = state.raw.read().clone();
+    let command = state.command.lock().clone();
+    let deadman_ok = command
+        .last_cmd_at
+        .map(|last| last.elapsed() <= Duration::from_millis(state.deadman_ms))
+        .unwrap_or(true);
+    TelemetryFrame {
+        ts_ms: now_ms(),
+        robot: state.role.clone(),
+        battery_v: raw.battery_v,
+        left_cmd: command.left_cmd,
+        right_cmd: command.right_cmd,
+        odometry_left: raw.odometry_left,
+        odometry_right: raw.odometry_right,
+        yaw: raw.yaw,
+        session_id: command.active_session_id,
+        deadman_ok,
+        estop: command.estop,
+        stopped_by_deadman: command.stopped_by_deadman,
+        speed_mode: command.speed_mode,
+        max_speed: command.speed_mode.cap(),
+        last_raw_frame_ms: raw.last_raw_frame_ms,
+        camera: camera_status_for(state),
+        lidar: SensorAvailability {
+            status: "unavailable",
+        },
+        imu: imu_status_for(&raw),
+        source: raw.source,
+    }
+}
+
+fn estop_inner(state: &AppState) -> Result<(), AppError> {
+    state.rover.stop()?;
+    let mut command = state.command.lock();
+    command.left_cmd = 0.0;
+    command.right_cmd = 0.0;
+    command.active_session_id = None;
+    command.estop = true;
+    command.stopped_by_deadman = false;
+    Ok(())
+}
+
+fn camera_status_for(state: &AppState) -> CameraStatus {
+    let has_proxy = state.camera_stream_url.is_some() || state.camera_snapshot_url.is_some();
+    let has_device = state.camera_device.is_some();
+    CameraStatus {
+        status: if has_proxy {
+            "proxy"
+        } else if has_device {
+            "configured"
+        } else {
+            "placeholder"
+        },
+        device: state.camera_device.clone(),
+        stream_url: state.camera_stream_url.clone(),
+        snapshot_url: state.camera_snapshot_url.clone(),
+    }
+}
+
+fn imu_status_for(raw: &RawTelemetry) -> ImuStatus {
+    ImuStatus {
+        status: if raw.accel.is_some()
+            || raw.gyro.is_some()
+            || raw.mag.is_some()
+            || raw.yaw.is_some()
+        {
+            "available"
+        } else {
+            "unavailable"
+        },
+        accel: raw.accel,
+        gyro: raw.gyro,
+        mag: raw.mag,
+        yaw: raw.yaw,
+    }
 }
 
 fn parse_esp32_telemetry(line: &str) -> Option<RawTelemetry> {
@@ -735,6 +991,9 @@ fn parse_esp32_telemetry(line: &str) -> Option<RawTelemetry> {
             odometry_left: value.get("odl").and_then(Value::as_f64),
             odometry_right: value.get("odr").and_then(Value::as_f64),
             yaw: None,
+            accel: vec3(&value, "ax", "ay", "az"),
+            gyro: vec3(&value, "gx", "gy", "gz"),
+            mag: vec3(&value, "mx", "my", "mz"),
             source: "serial",
             last_raw_frame_ms: Some(now_ms()),
         }),
@@ -743,10 +1002,28 @@ fn parse_esp32_telemetry(line: &str) -> Option<RawTelemetry> {
             odometry_left: None,
             odometry_right: None,
             yaw: value.get("y").and_then(Value::as_f64),
+            accel: None,
+            gyro: None,
+            mag: None,
             source: "serial",
             last_raw_frame_ms: Some(now_ms()),
         }),
         _ => None,
+    }
+}
+
+fn vec3(value: &Value, x: &str, y: &str, z: &str) -> Option<[f64; 3]> {
+    Some([
+        value.get(x)?.as_f64()?,
+        value.get(y)?.as_f64()?,
+        value.get(z)?.as_f64()?,
+    ])
+}
+
+fn mode_name(mode: Mode) -> &'static str {
+    match mode {
+        Mode::Sim => "sim",
+        Mode::Serial => "serial",
     }
 }
 
@@ -842,6 +1119,17 @@ mod tests {
         assert_eq!(parsed.odometry_right, Some(1.5));
         assert_eq!(parsed.source, "serial");
         assert!(parsed.last_raw_frame_ms.is_some());
+    }
+
+    #[test]
+    fn parses_imu_values_from_base_telemetry_frame() {
+        let parsed = parse_esp32_telemetry(
+            r#"{"T":1001,"ax":1,"ay":2,"az":3,"gx":4,"gy":5,"gz":6,"mx":7,"my":8,"mz":9}"#,
+        )
+        .expect("base telemetry");
+        assert_eq!(parsed.accel, Some([1.0, 2.0, 3.0]));
+        assert_eq!(parsed.gyro, Some([4.0, 5.0, 6.0]));
+        assert_eq!(parsed.mag, Some([7.0, 8.0, 9.0]));
     }
 
     #[test]
