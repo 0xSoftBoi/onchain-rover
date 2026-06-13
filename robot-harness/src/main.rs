@@ -34,6 +34,14 @@ use tracing_subscriber::EnvFilter;
 
 const DEFAULT_DEADMAN_MS: u64 = 400;
 const TELEMETRY_HZ: u64 = 10;
+const DEFAULT_LIDAR_PORT: &str = "/dev/ttyACM0";
+const DEFAULT_LIDAR_BAUD: u32 = 230_400;
+const LIDAR_FRAME_LEN: usize = 47;
+const LIDAR_POINTS_PER_FRAME: usize = 12;
+const LIDAR_FRONT_CONE_DEG: f64 = 20.0;
+const LIDAR_MIN_VALID_MM: u16 = 20;
+const LIDAR_STALE_MS: u128 = 1_000;
+const LIDAR_WINDOW_MS: u128 = 250;
 
 #[derive(Debug, Parser)]
 struct Opts {
@@ -66,6 +74,18 @@ struct Opts {
 
     #[arg(long, env = "ROVER_CAMERA_SNAPSHOT_URL")]
     camera_snapshot_url: Option<String>,
+
+    #[arg(long, env = "ROVER_LIDAR_PORT", default_value = DEFAULT_LIDAR_PORT)]
+    lidar_port: String,
+
+    #[arg(long, env = "ROVER_LIDAR_BAUD", default_value_t = DEFAULT_LIDAR_BAUD)]
+    lidar_baud: u32,
+
+    #[arg(long, env = "ROVER_LIDAR_ENABLED", default_value_t = true)]
+    lidar_enabled: bool,
+
+    #[arg(long, env = "ROVER_LIDAR_BLOCK_THRESHOLD_M", default_value_t = 0.30)]
+    lidar_block_threshold_m: f64,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -162,7 +182,7 @@ struct TelemetryFrame {
     last_raw_frame_ms: Option<u128>,
     raw_frame_age_ms: Option<u128>,
     camera: CameraStatus,
-    lidar: SensorAvailability,
+    lidar: LidarStatus,
     imu: ImuStatus,
     sensors: SensorSnapshot,
     source: &'static str,
@@ -177,8 +197,30 @@ struct CameraStatus {
 }
 
 #[derive(Debug, Clone, Serialize)]
-struct SensorAvailability {
+struct LidarStatus {
     status: &'static str,
+    source: &'static str,
+    port: Option<String>,
+    front_m: Option<f64>,
+    min_m: Option<f64>,
+    blocked: bool,
+    points: usize,
+    last_frame_ms: Option<u128>,
+    age_ms: Option<u128>,
+    error: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct LidarReading {
+    status: &'static str,
+    source: &'static str,
+    port: Option<String>,
+    front_m: Option<f64>,
+    min_m: Option<f64>,
+    blocked: bool,
+    points: usize,
+    last_frame_ms: Option<u128>,
+    error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -200,7 +242,7 @@ struct SensorSnapshot {
     battery: BatteryStatus,
     odometry: OdometryStatus,
     imu: ImuStatus,
-    lidar: SensorAvailability,
+    lidar: LidarStatus,
     camera: CameraStatus,
     raw_frame: RawFrameStatus,
 }
@@ -336,6 +378,7 @@ struct AppState {
     camera_device: Option<String>,
     camera_stream_url: Option<String>,
     camera_snapshot_url: Option<String>,
+    lidar: Arc<RwLock<LidarReading>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -411,7 +454,7 @@ struct SensorsResp {
     battery_v: Option<f64>,
     odometry: OdometryStatus,
     imu: ImuStatus,
-    lidar: SensorAvailability,
+    lidar: LidarStatus,
     camera: CameraStatus,
     last_raw_frame_ms: Option<u128>,
     raw_frame_age_ms: Option<u128>,
@@ -433,6 +476,11 @@ async fn main() -> Result<()> {
 
     let opts = Opts::parse();
     let raw = Arc::new(RwLock::new(initial_raw_telemetry(opts.mode)));
+    let lidar = Arc::new(RwLock::new(initial_lidar_reading(
+        opts.mode,
+        &opts.lidar_port,
+        opts.lidar_block_threshold_m,
+    )));
     let command = Arc::new(Mutex::new(CommandState::default()));
 
     let rover: Arc<dyn RoverControl> = match opts.mode {
@@ -461,12 +509,21 @@ async fn main() -> Result<()> {
         camera_device: opts.camera_device,
         camera_stream_url: opts.camera_stream_url,
         camera_snapshot_url: opts.camera_snapshot_url,
+        lidar,
     };
 
     spawn_deadman(state.clone());
     spawn_telemetry_loop(state.clone());
     if matches!(state.mode, Mode::Sim) {
         spawn_sim_telemetry_loop(state.clone());
+    }
+    if matches!(state.mode, Mode::Serial) && opts.lidar_enabled {
+        spawn_lidar_reader(
+            state.lidar.clone(),
+            opts.lidar_port.clone(),
+            opts.lidar_baud,
+            opts.lidar_block_threshold_m,
+        );
     }
 
     let app = Router::new()
@@ -1029,6 +1086,258 @@ fn spawn_sim_telemetry_loop(state: AppState) {
     });
 }
 
+fn spawn_lidar_reader(
+    lidar: Arc<RwLock<LidarReading>>,
+    port_path: String,
+    baud: u32,
+    block_threshold_m: f64,
+) {
+    thread::spawn(move || loop {
+        match serialport::new(&port_path, baud)
+            .timeout(Duration::from_millis(200))
+            .open()
+        {
+            Ok(mut port) => {
+                info!(%port_path, baud, "lidar serial connected");
+                clear_lidar_error(&lidar, &port_path);
+                let mut parser = Ld06Parser::default();
+                let mut buffer = [0_u8; 256];
+                let mut window = LidarScanWindow::new(now_ms());
+
+                loop {
+                    match port.read(&mut buffer) {
+                        Ok(0) => continue,
+                        Ok(n) => {
+                            for points in parser.push_bytes(&buffer[..n]) {
+                                let now = now_ms();
+                                if now.saturating_sub(window.started_ms) > LIDAR_WINDOW_MS {
+                                    window = LidarScanWindow::new(now);
+                                }
+                                window.ingest(&points);
+                                if window.points > 0 {
+                                    publish_lidar_window(
+                                        &lidar,
+                                        &port_path,
+                                        &window,
+                                        now,
+                                        block_threshold_m,
+                                    );
+                                }
+                            }
+                        }
+                        Err(err) if err.kind() == std::io::ErrorKind::TimedOut => continue,
+                        Err(err) => {
+                            warn!(%port_path, ?err, "lidar serial read failed");
+                            record_lidar_error(&lidar, &port_path, err.to_string());
+                            break;
+                        }
+                    }
+                }
+            }
+            Err(err) => {
+                warn!(%port_path, baud, ?err, "lidar serial open failed");
+                record_lidar_error(&lidar, &port_path, err.to_string());
+                thread::sleep(Duration::from_secs(1));
+            }
+        }
+    });
+}
+
+#[derive(Debug, Clone, Copy)]
+struct LidarPoint {
+    angle_deg: f64,
+    distance_mm: u16,
+}
+
+#[derive(Debug)]
+struct LidarScanWindow {
+    started_ms: u128,
+    front_m: Option<f64>,
+    min_m: Option<f64>,
+    points: usize,
+}
+
+impl LidarScanWindow {
+    fn new(started_ms: u128) -> Self {
+        Self {
+            started_ms,
+            front_m: None,
+            min_m: None,
+            points: 0,
+        }
+    }
+
+    fn ingest(&mut self, points: &[LidarPoint]) {
+        for point in points {
+            if point.distance_mm < LIDAR_MIN_VALID_MM {
+                continue;
+            }
+            let meters = round3(f64::from(point.distance_mm) / 1000.0);
+            self.min_m = min_optional(self.min_m, meters);
+            if is_front_angle(point.angle_deg, LIDAR_FRONT_CONE_DEG) {
+                self.front_m = min_optional(self.front_m, meters);
+            }
+            self.points += 1;
+        }
+    }
+}
+
+#[derive(Default)]
+struct Ld06Parser {
+    buffer: Vec<u8>,
+}
+
+impl Ld06Parser {
+    fn push_bytes(&mut self, bytes: &[u8]) -> Vec<Vec<LidarPoint>> {
+        self.buffer.extend_from_slice(bytes);
+        let mut frames = Vec::new();
+
+        loop {
+            let Some(header_pos) = self.buffer.iter().position(|byte| *byte == 0x54) else {
+                self.buffer.clear();
+                break;
+            };
+            if header_pos > 0 {
+                self.buffer.drain(..header_pos);
+            }
+            if self.buffer.len() < 2 {
+                break;
+            }
+            if self.buffer[1] != 0x2c {
+                self.buffer.remove(0);
+                continue;
+            }
+            if self.buffer.len() < LIDAR_FRAME_LEN {
+                break;
+            }
+
+            let frame = self.buffer[..LIDAR_FRAME_LEN].to_vec();
+            self.buffer.drain(..LIDAR_FRAME_LEN);
+            if let Some(points) = parse_ld06_frame(&frame) {
+                frames.push(points);
+            }
+        }
+
+        if self.buffer.len() > LIDAR_FRAME_LEN * 8 {
+            let keep_from = self.buffer.len().saturating_sub(LIDAR_FRAME_LEN);
+            self.buffer.drain(..keep_from);
+        }
+
+        frames
+    }
+}
+
+fn parse_ld06_frame(frame: &[u8]) -> Option<Vec<LidarPoint>> {
+    if frame.len() != LIDAR_FRAME_LEN || frame[0] != 0x54 || frame[1] != 0x2c {
+        return None;
+    }
+    if ld06_crc8(&frame[..LIDAR_FRAME_LEN - 1]) != frame[LIDAR_FRAME_LEN - 1] {
+        return None;
+    }
+
+    let start_angle = f64::from(read_u16_le(frame, 4)?) / 100.0;
+    let end_angle = f64::from(read_u16_le(frame, 42)?) / 100.0;
+    let span = angle_delta_deg(start_angle, end_angle);
+    let step = span / (LIDAR_POINTS_PER_FRAME - 1) as f64;
+    let mut points = Vec::with_capacity(LIDAR_POINTS_PER_FRAME);
+
+    for index in 0..LIDAR_POINTS_PER_FRAME {
+        let offset = 6 + index * 3;
+        let distance_mm = read_u16_le(frame, offset)?;
+        points.push(LidarPoint {
+            angle_deg: normalize_angle_deg(start_angle + step * index as f64),
+            distance_mm,
+        });
+    }
+
+    Some(points)
+}
+
+fn ld06_crc8(bytes: &[u8]) -> u8 {
+    let mut crc = 0_u8;
+    for byte in bytes {
+        crc ^= *byte;
+        for _ in 0..8 {
+            crc = if crc & 0x80 != 0 {
+                (crc << 1) ^ 0x4d
+            } else {
+                crc << 1
+            };
+        }
+    }
+    crc
+}
+
+fn read_u16_le(bytes: &[u8], offset: usize) -> Option<u16> {
+    Some(u16::from_le_bytes([
+        *bytes.get(offset)?,
+        *bytes.get(offset + 1)?,
+    ]))
+}
+
+fn angle_delta_deg(start: f64, end: f64) -> f64 {
+    if end >= start {
+        end - start
+    } else {
+        end + 360.0 - start
+    }
+}
+
+fn normalize_angle_deg(angle: f64) -> f64 {
+    let normalized = angle % 360.0;
+    if normalized < 0.0 {
+        normalized + 360.0
+    } else {
+        normalized
+    }
+}
+
+fn is_front_angle(angle: f64, cone_deg: f64) -> bool {
+    angle <= cone_deg || angle >= 360.0 - cone_deg
+}
+
+fn min_optional(current: Option<f64>, candidate: f64) -> Option<f64> {
+    Some(current.map_or(candidate, |value| value.min(candidate)))
+}
+
+fn clear_lidar_error(lidar: &Arc<RwLock<LidarReading>>, port_path: &str) {
+    let mut reading = lidar.write();
+    reading.status = "unavailable";
+    reading.source = "ld06";
+    reading.port = Some(port_path.to_string());
+    reading.error = None;
+}
+
+fn record_lidar_error(lidar: &Arc<RwLock<LidarReading>>, port_path: &str, error: String) {
+    let mut reading = lidar.write();
+    reading.status = "error";
+    reading.source = "ld06";
+    reading.port = Some(port_path.to_string());
+    reading.error = Some(error);
+}
+
+fn publish_lidar_window(
+    lidar: &Arc<RwLock<LidarReading>>,
+    port_path: &str,
+    window: &LidarScanWindow,
+    now: u128,
+    block_threshold_m: f64,
+) {
+    let blocked_distance = window.front_m.or(window.min_m);
+    let mut reading = lidar.write();
+    reading.status = "available";
+    reading.source = "ld06";
+    reading.port = Some(port_path.to_string());
+    reading.front_m = window.front_m;
+    reading.min_m = window.min_m;
+    reading.blocked = blocked_distance
+        .map(|distance| distance <= block_threshold_m)
+        .unwrap_or(false);
+    reading.points = window.points;
+    reading.last_frame_ms = Some(now);
+    reading.error = None;
+}
+
 fn current_telemetry_frame(state: &AppState) -> TelemetryFrame {
     let raw = state.raw.read().clone();
     let command = state.command.lock().clone();
@@ -1125,12 +1434,39 @@ fn initial_raw_telemetry(mode: Mode) -> RawTelemetry {
     }
 }
 
+fn initial_lidar_reading(mode: Mode, port: &str, block_threshold_m: f64) -> LidarReading {
+    match mode {
+        Mode::Sim => LidarReading {
+            status: "simulated",
+            source: "sim",
+            port: None,
+            front_m: Some(1.0),
+            min_m: Some(1.0),
+            blocked: 1.0 <= block_threshold_m,
+            points: 1,
+            last_frame_ms: Some(now_ms()),
+            error: None,
+        },
+        Mode::Serial => LidarReading {
+            status: "unavailable",
+            source: "ld06",
+            port: Some(port.to_string()),
+            front_m: None,
+            min_m: None,
+            blocked: false,
+            points: 0,
+            last_frame_ms: None,
+            error: None,
+        },
+    }
+}
+
 fn sensor_snapshot_for(state: &AppState, raw: &RawTelemetry, now: u128) -> SensorSnapshot {
     SensorSnapshot {
         battery: battery_status_for(raw),
         odometry: odometry_status_for(raw),
         imu: imu_status_for(raw),
-        lidar: lidar_status_for(),
+        lidar: lidar_status_for(state, now),
         camera: camera_status_for(state),
         raw_frame: raw_frame_status_for(raw, now),
     }
@@ -1159,9 +1495,34 @@ fn odometry_status_for(raw: &RawTelemetry) -> OdometryStatus {
     }
 }
 
-fn lidar_status_for() -> SensorAvailability {
-    SensorAvailability {
-        status: "unavailable",
+fn lidar_status_for(state: &AppState, now: u128) -> LidarStatus {
+    let reading = state.lidar.read().clone();
+    let age_ms = reading
+        .last_frame_ms
+        .map(|last_frame| now.saturating_sub(last_frame));
+    let status = if reading.status == "simulated" {
+        "simulated"
+    } else if age_ms.is_some_and(|age| age <= LIDAR_STALE_MS) {
+        "available"
+    } else if reading.last_frame_ms.is_some() {
+        "stale"
+    } else if reading.error.is_some() {
+        "error"
+    } else {
+        reading.status
+    };
+
+    LidarStatus {
+        status,
+        source: reading.source,
+        port: reading.port,
+        front_m: reading.front_m,
+        min_m: reading.min_m,
+        blocked: reading.blocked,
+        points: reading.points,
+        last_frame_ms: reading.last_frame_ms,
+        age_ms,
+        error: reading.error,
     }
 }
 
@@ -1375,6 +1736,7 @@ mod tests {
             camera_device: None,
             camera_stream_url: None,
             camera_snapshot_url: None,
+            lidar: Arc::new(RwLock::new(initial_lidar_reading(Mode::Sim, "", 0.30))),
         };
         (state, commands)
     }
@@ -1388,6 +1750,23 @@ mod tests {
                 speed_mode,
             },
         );
+    }
+
+    fn make_ld06_frame(start_cdeg: u16, end_cdeg: u16, distances: [u16; 12]) -> Vec<u8> {
+        let mut frame = vec![0_u8; LIDAR_FRAME_LEN];
+        frame[0] = 0x54;
+        frame[1] = 0x2c;
+        frame[2..4].copy_from_slice(&3500_u16.to_le_bytes());
+        frame[4..6].copy_from_slice(&start_cdeg.to_le_bytes());
+        for (index, distance) in distances.iter().enumerate() {
+            let offset = 6 + index * 3;
+            frame[offset..offset + 2].copy_from_slice(&distance.to_le_bytes());
+            frame[offset + 2] = 100;
+        }
+        frame[42..44].copy_from_slice(&end_cdeg.to_le_bytes());
+        frame[44..46].copy_from_slice(&123_u16.to_le_bytes());
+        frame[46] = ld06_crc8(&frame[..46]);
+        frame
     }
 
     #[test]
@@ -1467,6 +1846,57 @@ mod tests {
     fn ignores_unknown_or_invalid_frames() {
         assert!(parse_esp32_telemetry(r#"{"T":999}"#).is_none());
         assert!(parse_esp32_telemetry("not-json").is_none());
+    }
+
+    #[test]
+    fn parses_ld06_lidar_frame_and_front_window() {
+        let mut distances = [1_000_u16; 12];
+        distances[0] = 400;
+        distances[11] = 200;
+        let frame = make_ld06_frame(35_000, 1_000, distances);
+        let points = parse_ld06_frame(&frame).expect("ld06 frame");
+
+        assert_eq!(points.len(), 12);
+        assert_eq!(round3(points[0].angle_deg), 350.0);
+        assert_eq!(round3(points[11].angle_deg), 10.0);
+
+        let mut window = LidarScanWindow::new(10);
+        window.ingest(&points);
+        assert_eq!(window.points, 12);
+        assert_eq!(window.min_m, Some(0.2));
+        assert_eq!(window.front_m, Some(0.2));
+    }
+
+    #[test]
+    fn rejects_ld06_frame_with_bad_checksum() {
+        let mut frame = make_ld06_frame(0, 1_100, [1_000_u16; 12]);
+        frame[6] ^= 0xff;
+
+        assert!(parse_ld06_frame(&frame).is_none());
+    }
+
+    #[test]
+    fn lidar_status_reports_available_then_stale() {
+        let (state, _) = test_state(false);
+        *state.lidar.write() = LidarReading {
+            status: "available",
+            source: "ld06",
+            port: Some("/dev/ttyACM0".to_string()),
+            front_m: Some(0.25),
+            min_m: Some(0.25),
+            blocked: true,
+            points: 12,
+            last_frame_ms: Some(1_000),
+            error: None,
+        };
+
+        let fresh = lidar_status_for(&state, 1_500);
+        assert_eq!(fresh.status, "available");
+        assert_eq!(fresh.front_m, Some(0.25));
+        assert!(fresh.blocked);
+
+        let stale = lidar_status_for(&state, 2_500);
+        assert_eq!(stale.status, "stale");
     }
 
     #[test]

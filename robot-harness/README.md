@@ -32,8 +32,15 @@ Stop the stock Waveshare app first so only this service owns `/dev/ttyTHS1`.
 pgrep -f '[a]pp.py' | xargs -r kill
 cd robot-harness
 ROBOT_ROLE=courier ROVER_MODE=serial ROVER_SERIAL_PORT=/dev/ttyTHS1 \
+  ROVER_LIDAR_PORT=/dev/ttyACM0 ROVER_LIDAR_BAUD=230400 \
   cargo run --release -- --listen 0.0.0.0:8000
 ```
+
+The USB lidar is read directly by the Rust harness. The current hardware uses
+an LD06/LD19-compatible binary stream on `/dev/ttyACM0` at `230400` baud. Set
+`ROVER_LIDAR_ENABLED=0` to run without it, or adjust
+`ROVER_LIDAR_BLOCK_THRESHOLD_M` when the finish/obstacle threshold needs to
+move from the default `0.30m`.
 
 Camera endpoints are controlled by environment. In sim mode, the Rust server
 returns a deterministic synthetic camera stream for local tests. In serial mode,
@@ -79,7 +86,8 @@ grouped sensor contract under `sensors`:
 - `battery`: voltage and availability
 - `odometry`: left/right wheel odometry and availability
 - `imu`: accel/gyro/mag/yaw values when present
-- `lidar`: currently explicit `unavailable` until a hardware adapter is wired
+- `lidar`: LD06/LD19 range status with `front_m`, `min_m`, `blocked`, frame age,
+  and stale/error states
 - `camera`: simulated/proxy/configured/unavailable camera status
 - `raw_frame`: source, latest raw telemetry timestamp, and frame age
 
