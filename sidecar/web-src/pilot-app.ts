@@ -23,6 +23,7 @@ type DriverSlot = "challenger" | "opponent";
 type PilotRoundState = {
   id: string;
   status: string;
+  chainRaceId?: string;
   stakeUsdc: string;
   feeUsdc: string;
   durationSecs: number;
@@ -321,6 +322,7 @@ async function connect() {
 
 async function completeRaceEntryIfNeeded() {
   if (!roundId || raceEntryComplete) return;
+  if (await useExistingRaceEntryIfReady()) return;
   const signer = createWalletSigner();
 
   setModalStatus(`Connecting ${signer.label}...`);
@@ -364,6 +366,51 @@ async function completeRaceEntryIfNeeded() {
   });
   raceEntryComplete = true;
   setModalStatus("Race entry confirmed", "ok");
+}
+
+async function useExistingRaceEntryIfReady(): Promise<boolean> {
+  if (!roundId) return false;
+  const round = await getPilotRound();
+  const driver = round.drivers?.[driverSlot];
+  if (!driver) return false;
+  const chainReady = !round.chainRaceId || driver.chainJoined === true;
+  if (driver.feePaid === true && driver.stakeAuthorized === true && chainReady) {
+    roundState = {
+      id: round.id,
+      status: round.status,
+      chainRaceId: round.chainRaceId,
+      stakeUsdc: round.stakeUsdc,
+      feeUsdc: round.feeUsdc,
+      durationSecs: round.durationSecs,
+      countdownSecs: round.countdownSecs,
+      roundStartsAt: round.roundStartsAt,
+      startedAt: round.startedAt,
+      driver: {
+        slot: driverSlot,
+        wallet: driver.wallet,
+        displayName: driver.displayName,
+        robot: driver.robot,
+        lane: driver.lane,
+        feePaid: driver.feePaid,
+        stakeAuthorized: driver.stakeAuthorized,
+        chainJoined: Boolean(driver.chainJoined),
+      },
+    };
+    renderRoundState();
+    raceEntryComplete = true;
+    setModalStatus("Race entry already confirmed", "ok");
+    return true;
+  }
+  return false;
+}
+
+async function getPilotRound(): Promise<PilotRoundState & {
+  drivers?: Record<DriverSlot, PilotRoundState["driver"]>;
+}> {
+  const res = await fetch(`/race/round/${encodeURIComponent(roundId!)}`);
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok || json.error) throw new Error(json.error || `round lookup failed ${res.status}`);
+  return json;
 }
 
 async function postJson(url: string, body: unknown): Promise<unknown> {
@@ -840,7 +887,7 @@ function setupControls() {
 
   els.startButton.onclick = async () => {
     els.startButton.disabled = true;
-    els.startButton.textContent = roundId && !raceEntryComplete ? "SIGNING" : "CONNECTING";
+    els.startButton.textContent = roundId && !raceEntryComplete ? "CHECKING" : "CONNECTING";
     try {
       await completeRaceEntryIfNeeded();
       started = true;
