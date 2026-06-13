@@ -66,6 +66,7 @@ class TaskReq(BaseModel):
 
 class TextReq(BaseModel):
     text: str
+    voice: str | None = None   # "texas" | "robot" (default)
 
 
 class GibberReq(BaseModel):
@@ -166,7 +167,7 @@ def worldid(req: WorldVerifyReq):
 
 @app.post("/say")
 def say(req: TextReq):
-    voice.say(req.text)
+    voice.say(req.text, voice=req.voice)
     return {"ok": True}
 
 
