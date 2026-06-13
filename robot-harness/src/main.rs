@@ -138,6 +138,7 @@ struct RawTelemetry {
 struct PilotSession {
     expires_at: Instant,
     not_before_epoch_ms: Option<u128>,
+    not_after_epoch_ms: Option<u128>,
     speed_mode: SpeedMode,
 }
 
@@ -402,6 +403,7 @@ struct PilotTokenReq {
     #[serde(default)]
     speed_mode: SpeedMode,
     not_before_epoch_ms: Option<u128>,
+    not_after_epoch_ms: Option<u128>,
 }
 
 #[derive(Debug, Serialize)]
@@ -844,6 +846,7 @@ async fn pilot_authorize(
         PilotSession {
             expires_at: Instant::now() + Duration::from_secs_f64(ttl_secs),
             not_before_epoch_ms: req.not_before_epoch_ms,
+            not_after_epoch_ms: req.not_after_epoch_ms,
             speed_mode: req.speed_mode,
         },
     );
@@ -1012,6 +1015,11 @@ fn validate_session(state: &AppState, token: &str) -> Result<PilotSession, AppEr
     if let Some(not_before) = session.not_before_epoch_ms {
         if now_ms() < not_before {
             return Err(AppError::forbidden("round has not started"));
+        }
+    }
+    if let Some(not_after) = session.not_after_epoch_ms {
+        if now_ms() > not_after {
+            return Err(AppError::forbidden("round has ended"));
         }
     }
     Ok(session)
@@ -1846,6 +1854,7 @@ mod tests {
             PilotSession {
                 expires_at: Instant::now() + Duration::from_secs(5),
                 not_before_epoch_ms: None,
+                not_after_epoch_ms: None,
                 speed_mode,
             },
         );
@@ -2167,5 +2176,34 @@ mod tests {
 
         assert_eq!(&*commands.lock(), &[(-0.25, -0.25)]);
         assert!(!current_telemetry_frame(&state).soft_odometry_limited);
+    }
+
+    #[tokio::test]
+    async fn ended_round_window_blocks_drive() {
+        let (state, commands) = test_state(false);
+        state.sessions.lock().insert(
+            "pilot".to_string(),
+            PilotSession {
+                expires_at: Instant::now() + Duration::from_secs(5),
+                not_before_epoch_ms: None,
+                not_after_epoch_ms: Some(now_ms().saturating_sub(1)),
+                speed_mode: SpeedMode::Medium,
+            },
+        );
+
+        let err = drive(
+            State(state),
+            Json(DriveReq {
+                left: 0.5,
+                right: 0.5,
+                token: Some("pilot".to_string()),
+            }),
+        )
+        .await
+        .expect_err("ended round window should block drive");
+
+        assert_eq!(err.status, StatusCode::FORBIDDEN);
+        assert_eq!(err.message, "round has ended");
+        assert!(commands.lock().is_empty());
     }
 }

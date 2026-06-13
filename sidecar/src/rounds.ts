@@ -500,6 +500,7 @@ function updateReady(round: Round) {
 
 async function authorizeRobots(round: Round, robotUrl: (name: RobotName) => string) {
   const roundStartsAt = Date.now() + round.countdownSecs * 1000;
+  const roundEndsAt = roundStartsAt + round.durationSecs * 1000;
   round.roundStartsAt = roundStartsAt;
   for (const slot of ["challenger", "opponent"] as const) {
     const driver = requireDriver(round, slot);
@@ -514,6 +515,7 @@ async function authorizeRobots(round: Round, robotUrl: (name: RobotName) => stri
         ttl_secs: round.durationSecs + round.countdownSecs + 15,
         speed_mode: round.stageCalibration.speedDefaults.defaultSpeedMode,
         not_before_epoch_ms: roundStartsAt,
+        not_after_epoch_ms: roundEndsAt,
       }),
       signal: AbortSignal.timeout(4000),
     });

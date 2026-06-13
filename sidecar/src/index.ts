@@ -691,12 +691,15 @@ app.post("/race/round/:id/pilot/session", (req, res) => {
     const publicBaseUrl = process.env.PUBLIC_SIDECAR_URL
       || `${req.protocol}://${req.get("host")}`;
     const ttlSecs = Math.max(30, round.durationSecs + round.countdownSecs + 30);
-    const notBeforeMs = round.status === "racing" ? undefined : round.roundStartsAt;
+    const startsAt = round.roundStartsAt ?? Date.now();
+    const notBeforeMs = round.status === "racing" ? undefined : startsAt;
+    const notAfterMs = startsAt + round.durationSecs * 1000;
     const session = robotLink.authorizePilotSession(driver.robot, publicBaseUrl, {
       ttlSecs,
       speedMode: calibratedSpeedMode(round, robotLink.parseSpeedMode(req.body.speed_mode)),
       maxSpeedMode: round.stageCalibration.speedDefaults.maxSpeedMode,
       notBeforeMs,
+      notAfterMs,
     });
     res.json({ ...session, round: pilotRoundState(round, slot) });
   } catch (e: any) { res.status(400).json({ error: e.message }); }
@@ -839,5 +842,16 @@ function finishRoundWithEvidence(
   let round = rounds.finishRound(roundId, winner, proof);
   evidence.recordRoundSnapshot(round, "finished");
   const finalized = evidence.finalizeResultProof(round, proof);
-  return rounds.markEvidenceHashes(roundId, finalized.proofHash, finalized.evidenceHash);
+  round = rounds.markEvidenceHashes(roundId, finalized.proofHash, finalized.evidenceHash);
+  revokeRoundPilots(round);
+  return round;
+}
+
+function revokeRoundPilots(round: rounds.Round) {
+  const robots = new Set(
+    (["challenger", "opponent"] as const)
+      .map((slot) => round.drivers[slot]?.robot)
+      .filter((robot): robot is RobotName => robot === "guard" || robot === "courier"),
+  );
+  for (const robot of robots) robotLink.revokePilotSessions(robot, "round finished");
 }

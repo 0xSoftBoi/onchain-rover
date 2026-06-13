@@ -47,6 +47,13 @@ async function main() {
   assert(challengerPilot.driveWs && challengerPilot.token, "challenger pilot session missing");
   assert(opponentPilot.driveWs && opponentPilot.token, "opponent pilot session missing");
 
+  round = await postJson(`/race/round/${round.id}/finish`, {
+    winner: "challenger",
+    proof: { source: "e2e-dev-join" },
+  });
+  assert(round.status === "finished", `expected finished round, got ${round.status}`);
+  await assertDriveRejectedAfterFinish(challengerPilot.driveWs);
+
   const evidence = await getJson(`/race/round/${round.id}/evidence`);
   const lifecycle = evidence.evidence?.lifecycle ?? [];
   assert(lifecycle.some((event: { event?: string }) => event.event === "started"), "started evidence missing");
@@ -112,6 +119,20 @@ async function assertPreGoDriveRejected(value: string, token: string) {
   const body = await error;
   ws.close();
   assert(body.error === "round has not started", `unexpected pre-GO response: ${String(body.error)}`);
+}
+
+async function assertDriveRejectedAfterFinish(value: string) {
+  const ws = new WebSocket(rebaseWsUrl(value));
+  const closed = new Promise<{ code: number; reason: string }>((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error("finished round drive socket stayed open")), 2000);
+    ws.once("close", (code, reason) => {
+      clearTimeout(timeout);
+      resolve({ code, reason: reason.toString() });
+    });
+    ws.once("error", reject);
+  });
+  const result = await closed;
+  assert(result.code === 1008, `unexpected finished-round close code ${result.code}: ${result.reason}`);
 }
 
 function assert(condition: unknown, message: string): asserts condition {

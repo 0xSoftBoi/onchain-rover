@@ -13,6 +13,7 @@ type PilotSession = {
   robot: RobotName;
   expiresAt: number;
   notBeforeMs?: number;
+  notAfterMs?: number;
   speedMode: SpeedMode;
   maxSpeedMode: SpeedMode;
   lastCmdAt: number;
@@ -192,7 +193,13 @@ export function installRobotLink(app: Express, server: Server) {
 export function authorizePilotSession(
   robot: RobotName,
   publicBaseUrl: string,
-  opts: { ttlSecs?: number; speedMode?: SpeedMode; maxSpeedMode?: SpeedMode; notBeforeMs?: number } = {},
+  opts: {
+    ttlSecs?: number;
+    speedMode?: SpeedMode;
+    maxSpeedMode?: SpeedMode;
+    notBeforeMs?: number;
+    notAfterMs?: number;
+  } = {},
 ) {
   const runtime = runtimeFor(robot);
   retireExpiredSessions(runtime);
@@ -209,6 +216,7 @@ export function authorizePilotSession(
     robot,
     expiresAt: Date.now() + ttlSecs * 1000,
     notBeforeMs: opts.notBeforeMs,
+    notAfterMs: opts.notAfterMs,
     speedMode,
     maxSpeedMode,
     lastCmdAt: 0,
@@ -232,6 +240,14 @@ export function authorizePilotSession(
     maxSpeedMode,
     bridge: true,
   };
+}
+
+export function revokePilotSessions(robot: RobotName, reason = "pilot session revoked") {
+  const runtime = runtimeFor(robot);
+  for (const ws of runtime.pilotClients.keys()) ws.close(1000, reason);
+  runtime.pilotClients.clear();
+  runtime.sessions.clear();
+  safeStop(runtime, reason);
 }
 
 export function requireRobotName(value: unknown): RobotName {
@@ -389,6 +405,9 @@ function requireSession(
   }
   if (!opts.allowEarly && session.notBeforeMs && Date.now() < session.notBeforeMs) {
     throw new Error("round has not started");
+  }
+  if (session.notAfterMs && Date.now() > session.notAfterMs) {
+    throw new Error("round has ended");
   }
   return session;
 }
