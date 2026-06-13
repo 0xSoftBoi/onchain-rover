@@ -93,6 +93,11 @@
   </div>
 
   <div class="card full">
+    <h2>⛓️ On-Chain Settlement (live, Arc)</h2>
+    <div id="onchain"><span class="addr">waiting for the first settlement…</span></div>
+  </div>
+
+  <div class="card full">
     <h2>Activity</h2>
     <div id="log"></div>
   </div>
@@ -188,7 +193,21 @@ function addTx(label, tx) {
 }
 $("run").onclick = () => runAuction(true);
 $("run-voice").onclick = () => runAuction(false);
+async function pollOnchain(){
+  try {
+    const f = await (await fetch("/onchain/feed")).json();
+    const ex = $("explorer").href.replace(/\/$/,'');
+    if (!f.events || !f.events.length) return;
+    $("onchain").innerHTML = f.events.map(e => {
+      const ts = new Date(e.t).toLocaleTimeString();
+      const link = e.tx ? `<a target="_blank" href="${ex}/tx/${e.tx}">${e.tx.slice(0,12)}…</a>` : '<span class="addr">pending</span>';
+      const tag = {PAY:'#3fb950',MINT:'#58a6ff',REPUTATION:'#d8a657',BET:'#bc8cff','RACE SETTLE':'#3fb950'}[e.kind]||'#7d8aa0';
+      return `<div class="kv"><span><b style="color:${tag}">${e.kind}</b> <span class="addr">${e.detail}</span></span><span class="v">${link}</span></div>`;
+    }).join("");
+  } catch {}
+}
 poll(); setInterval(poll, 4000);
+pollOnchain(); setInterval(pollOnchain, 3000);
 </script>
 </body>
 </html>

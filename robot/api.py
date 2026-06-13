@@ -33,6 +33,37 @@ ROLE = os.environ.get("ROBOT_ROLE", "guard")  # guard | courier
 SIDECAR_URL = os.environ.get("SIDECAR_URL")    # e.g. http://192.168.x.x:4021
 app = FastAPI(title=f"rover-{ROLE}")
 
+# --- live activity log (for the on-robot terminal dashboard) ---------------
+import collections
+_activity = collections.deque(maxlen=40)
+_state = {"action": "idle", "since": time.time()}
+
+
+def log_event(kind, detail=""):
+    _activity.appendleft({"t": time.time(), "kind": kind, "detail": str(detail)[:80]})
+    _state["action"] = kind
+    _state["since"] = time.time()
+
+
+@app.get("/activity")
+def activity():
+    return {"role": ROLE, "state": _state, "events": list(_activity)}
+
+
+@app.get("/telemetry")
+def telemetry():
+    """Full live telemetry for the terminal dashboard."""
+    try:
+        t = _live_rover().telemetry() or {}
+        return {"ok": True, "role": ROLE,
+                "battery_v": t.get("v", 0) / 100.0,
+                "accel": [t.get("ax"), t.get("ay"), t.get("az")],
+                "gyro": [t.get("gx"), t.get("gy"), t.get("gz")],
+                "odom": [t.get("odl"), t.get("odr")],
+                "action": _state["action"]}
+    except Exception as e:
+        return {"ok": False, "role": ROLE, "error": str(e)[:80]}
+
 
 @app.on_event("startup")
 async def _start_heartbeat():
@@ -97,6 +128,7 @@ def task(req: TaskReq):
 @app.post("/seek")
 def seek(req: SeekReq):
     """Vision-guided seek: Gemini open-vocab with AprilTag fallback."""
+    log_event("SEEK", req.target)
     return perception.seek(req.target, timeout_secs=req.timeout_secs,
                            rover=_live_rover())
 
@@ -104,6 +136,7 @@ def seek(req: SeekReq):
 @app.post("/capture")
 def capture():
     path, digest = agent.capture_photo()
+    log_event("CAPTURE", f"sha {digest[:10]}…")
     return {"photo": path, "sha256": digest}
 
 
@@ -138,11 +171,13 @@ def store_proof():
     path = "/tmp/rover_proof.jpg"
     digest = hashlib.sha256(open(path, "rb").read()).hexdigest()
     blob_id = proofmod.walrus_put(path)
+    log_event("WALRUS", f"blob {blob_id[:12]}…")
     return {"blobId": blob_id, "sha256": digest}
 
 
 @app.post("/gibber/send")
 def gibber_send(req: GibberReq):
+    log_event("GIBBERLINK ▶", f"{len(req.payload)}B chirp")
     gibber.send(req.payload)
     return {"sent": True, "bytes": len(req.payload)}
 
@@ -167,6 +202,7 @@ def worldid(req: WorldVerifyReq):
 
 @app.post("/say")
 def say(req: TextReq):
+    log_event("SAY", req.text)
     voice.say(req.text, voice=req.voice)
     return {"ok": True}
 
@@ -178,6 +214,7 @@ def admit():
     r.lights(255, 255)
     r.oled(0, "ACCESS GRANTED")
     r.gimbal(0, 30); time.sleep(0.4); r.gimbal(0, 0)  # nod
+    log_event("✓ ADMIT", "access granted")
     voice.say("Access granted. Welcome in.")
     return {"admitted": True}
 
@@ -187,6 +224,7 @@ def deny():
     r = _live_rover()
     r.lights(0, 0)
     r.oled(0, "ACCESS DENIED")
+    log_event("✗ DENY", "no valid pass")
     voice.say("Access denied. No valid pass detected.")
     return {"admitted": False}
 
@@ -294,6 +332,7 @@ class BuyReq(BaseModel):
 @app.post("/negotiate/sell")
 def negotiate_sell(req: SellReq):
     """GUARD: run the Dutch auction seller in the background. Poll /negotiate/result."""
+    log_event("AUCTION ◀", f"selling {req.item} from ${req.start}")
     def _run():
         _auction_results[req.auctionId] = negotiate.run_seller(
             item=req.item, start=req.start, floor=req.floor, step=req.step,
@@ -305,6 +344,7 @@ def negotiate_sell(req: SellReq):
 @app.post("/negotiate/buy")
 def negotiate_buy(req: BuyReq):
     """COURIER: run the Dutch auction buyer in the background."""
+    log_event("AUCTION ▶", f"bidding, budget ${req.budget}")
     def _run():
         _auction_results[req.auctionId] = negotiate.run_buyer(
             budget=req.budget, auction_id=req.auctionId,

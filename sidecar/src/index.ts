@@ -60,6 +60,16 @@ app.post("/robot/heartbeat", (req, res) => {
   res.json({ ok: true, registered: `http://${ip}:${port}` });
 });
 
+// --- on-chain settlement feed (live "what's settling" for the dashboard) ---
+type OnchainEvent = { t: number; kind: string; tx?: string; detail: string; explorer?: string };
+const onchainFeed: OnchainEvent[] = [];
+function logOnchain(kind: string, detail: string, tx?: string) {
+  onchainFeed.unshift({ t: Date.now(), kind, detail, tx,
+    explorer: tx ? `${ARC.explorer}/tx/${tx}` : undefined });
+  if (onchainFeed.length > 50) onchainFeed.pop();
+}
+app.get("/onchain/feed", (_req, res) => res.json({ events: onchainFeed.slice(0, 30) }));
+
 app.get("/robot/registry", (_req, res) => {
   res.json(Object.fromEntries([...liveRobots.entries()].map(([k, v]) =>
     [k, { ...v, freshSecs: Math.round((Date.now() - v.lastSeen) / 1000) }])));
@@ -130,6 +140,7 @@ app.post("/race/bet", async (req, res) => {
     if (process.env.RACEMARKET_ADDRESS && onChainRaceId !== null) {
       const racerIdx = race.raceState()?.racers.indexOf(racer as RobotName) ?? 0;
       onchain = await settle.betOnChain(onChainRaceId, racerIdx, String(amount), v.nullifier);
+      logOnchain("BET", `$${amount} on ${racer} (World-verified human)`, onchain?.tx);
     }
     const odds = race.placeBet({ bettor, racer, amount: Number(amount), nullifier: v.nullifier });
     res.json({ ...odds, onchain });
@@ -183,6 +194,7 @@ app.post("/race/finish", async (req, res) => {
       const winnerIdx = r.racers.indexOf(winner);
       settled = await settle.settleRaceOnChain(
         onChainRaceId, winnerIdx, proof.sha256 ?? "", proof.blobId ?? "");
+      logOnchain("RACE SETTLE", `${winner} wins · proof ${(proof.blobId||"").slice(0,10)}…`, settled?.tx);
     }
     res.json({ ...r, proof, settled });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -326,8 +338,10 @@ app.post("/race/auction/start", async (req, res) => {
       if (doSettle) {
         const pay = await settle.pay("courier", "guard", String(deal.price));
         st.pay = pay.tx;
+        logOnchain("PAY", `courier → guard $${deal.price} USDC`, pay.tx);
         const mint = await settle.mintPass("courier", String(deal.price));
         st.mint = mint.tx;
+        logOnchain("MINT", `EventPass → courier @ $${deal.price}`, mint.tx);
         st.note = "settled + minted; recording reputation…";
         // flywheel: requester rates the guard for the completed sale (skill=guard)
         try {
@@ -335,6 +349,7 @@ app.post("/race/auction/start", async (req, res) => {
             agentId: Number(ROBOTS.guard.agentId ?? 0), score: 95, skill: "guard",
           });
           st.feedback = fb.tx;
+          logOnchain("REPUTATION", "guard rated 95 (skill: guard)", fb.tx);
         } catch (e: any) { st.note = "minted; feedback skipped: " + e.message; }
         st.note = "settled + minted + reputation on Arc";
       }
