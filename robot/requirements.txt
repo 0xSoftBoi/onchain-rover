@@ -1,0 +1,11 @@
+# Jetson venv: ~/ugv_jetson/ugv-env/bin/pip install -r requirements.txt
+# (opencv-python already on the Jetson at 4.5.4 — do NOT reinstall it there)
+pyserial
+requests
+fastapi
+uvicorn
+pydantic>=2
+google-genai
+ggwave==0.4.3
+sounddevice
+numpy
