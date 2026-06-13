@@ -18,22 +18,34 @@ import gibber
 import voice
 
 
-def _say_price(prefix, price):
-    voice.say(f"{prefix} {price:.2f} dollars")
+def _dollars(price):
+    """Spoken price, e.g. 1.25 -> 'one dollar and twenty five cents'."""
+    d, c = int(price), int(round((price - int(price)) * 100))
+    head = f"{d} dollar{'s' if d != 1 else ''}"
+    return head if c == 0 else f"{head} and {c} cents"
+
+
+def _auctioneer_line(item, price, first):
+    if first:
+        return (f"Awright folks, step right up! We got a {item} on the block. "
+                f"Do I hear {_dollars(price)}? {_dollars(price)}, who'll gimme {_dollars(price)}!")
+    return (f"{_dollars(price)}! Goin' for {_dollars(price)}, "
+            f"do I hear a yes? Come on now!")
 
 
 def run_seller(item="EventPass", start=2.00, floor=0.50, step=0.25,
                tick_secs=4.0, auction_id="a1", speak=True):
-    """Dutch auction seller. Returns the deal dict, or None if no buyer by floor.
-
-    Announces each price (voice + chirp), then listens one tick for an ACCEPT.
-    """
+    """Dutch auction seller — a Texas auctioneer. Returns the deal dict, or a
+    no-deal dict if no buyer by the floor. Announces each price (voice +
+    mirror), then listens one tick for an ACCEPT."""
     price = start
+    first = True
     while price >= floor - 1e-9:
         offer = {"type": "offer", "item": item, "price": round(price, 2),
                  "auctionId": auction_id, "seller": "guard.rover.eth"}
         if speak:
-            _say_price(f"{item}, going for", price)
+            voice.say(_auctioneer_line(item, price, first), voice="texas")
+        first = False
         gibber.send(json.dumps(offer))               # chirp + mirror
 
         deadline = time.time() + tick_secs
@@ -51,7 +63,8 @@ def run_seller(item="EventPass", start=2.00, floor=0.50, step=0.25,
                         "buyer": msg.get("buyer"), "auctionId": auction_id}
                 gibber.send(json.dumps({"type": "settled", **deal}))  # signal first
                 if speak:
-                    voice.say(f"Sold, for {price:.2f} dollars.")     # theater after
+                    voice.say(f"SOLD! To the little robot, for {_dollars(price)}! "
+                              f"Yeehaw!", voice="texas")              # theater after
                 return deal
         price -= step
 
