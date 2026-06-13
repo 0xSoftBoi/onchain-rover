@@ -53,6 +53,11 @@
   </div>
 
   <div class="card">
+    <h2>🏆 ERC-8004 Reputation (live flywheel)</h2>
+    <div id="rep">—</div>
+  </div>
+
+  <div class="card">
     <h2>On-Chain (Arc testnet)</h2>
     <div class="kv"><span>EventPass NFT</span><span class="v" id="eventpass">—</span></div>
     <div class="kv"><span>Chain</span><span class="v" id="chain">—</span></div>
@@ -122,6 +127,15 @@ async function poll() {
       $("auction-status").textContent = "race: " + s.race.status +
         (s.race.winner ? ` · winner ${s.race.winner}` : "");
     }
+    try {
+      const rep = await (await fetch("/reputation")).json();
+      let rh = "";
+      for (const [name, r] of Object.entries(rep)) {
+        rh += `<div class="kv"><span>${r.ens||name}</span>
+          <span class="v">${r.count||0} reviews · avg <b style="color:var(--gold)">${r.avg||0}</b></span></div>`;
+      }
+      $("rep").innerHTML = rh;
+    } catch {}
   } catch (e) { log("poll error: " + e.message); }
 }
 
