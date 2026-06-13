@@ -1,0 +1,289 @@
+{
+  "schema": "onchain-rover.sensor-replay-fixture.v1",
+  "name": "two-lane-heat",
+  "description": "Deterministic two-driver heat with camera, lidar, odometry, lane progress, and perception/safety transitions.",
+  "round": {
+    "stakeUsdc": "1.00",
+    "feeUsdc": "0.25",
+    "durationSecs": 20,
+    "countdownSecs": 1,
+    "stageCalibration": {
+      "laneLengthFt": 60,
+      "laneWidthFt": 4,
+      "startLineFt": 0,
+      "finishLineFt": 60,
+      "robotAssignments": {
+        "challenger": { "robot": "guard", "lane": "left" },
+        "opponent": { "robot": "courier", "lane": "right" }
+      },
+      "safetyDefaults": {
+        "obstacleStopDistanceFt": 2,
+        "warningDistanceFt": 5
+      }
+    }
+  },
+  "frames": [
+    {
+      "atMs": 0,
+      "robot": "guard",
+      "frame": {
+        "battery_v": 12.4,
+        "left_cmd": 0,
+        "right_cmd": 0,
+        "odometry_left": 0,
+        "odometry_right": 0,
+        "yaw": 0,
+        "deadman_ok": true,
+        "estop": false,
+        "stopped_by_deadman": false,
+        "speed_mode": "medium",
+        "max_speed": 0.35,
+        "camera": {
+          "status": "simulated",
+          "health": "healthy",
+          "fps": 10,
+          "last_frame_age_ms": 80,
+          "resolution": "640x360",
+          "brightness": 0.62,
+          "reconnect_state": "connected"
+        },
+        "lidar": { "status": "simulated", "front_m": 1.2, "min_m": 1.08, "blocked": false }
+      }
+    },
+    {
+      "atMs": 0,
+      "robot": "courier",
+      "frame": {
+        "battery_v": 12.3,
+        "left_cmd": 0,
+        "right_cmd": 0,
+        "odometry_left": 0,
+        "odometry_right": 0,
+        "yaw": 0,
+        "deadman_ok": true,
+        "estop": false,
+        "stopped_by_deadman": false,
+        "speed_mode": "medium",
+        "max_speed": 0.35,
+        "camera": {
+          "status": "simulated",
+          "health": "healthy",
+          "fps": 10,
+          "last_frame_age_ms": 70,
+          "resolution": "640x360",
+          "brightness": 0.58,
+          "reconnect_state": "connected"
+        },
+        "lidar": { "status": "simulated", "front_m": 1.35, "min_m": 1.18, "blocked": false }
+      }
+    },
+    {
+      "atMs": 300,
+      "robot": "guard",
+      "frame": {
+        "battery_v": 12.39,
+        "left_cmd": 0.42,
+        "right_cmd": 0.42,
+        "odometry_left": 0.55,
+        "odometry_right": 0.55,
+        "yaw": 1.5,
+        "deadman_ok": true,
+        "estop": false,
+        "stopped_by_deadman": false,
+        "speed_mode": "medium",
+        "max_speed": 0.35,
+        "camera": {
+          "status": "simulated",
+          "health": "healthy",
+          "fps": 10,
+          "last_frame_age_ms": 95,
+          "resolution": "640x360",
+          "brightness": 0.63,
+          "reconnect_state": "connected"
+        },
+        "lidar": { "status": "simulated", "front_m": 0.95, "min_m": 0.86, "blocked": false }
+      }
+    },
+    {
+      "atMs": 450,
+      "robot": "courier",
+      "frame": {
+        "battery_v": 12.29,
+        "left_cmd": 0.34,
+        "right_cmd": 0.36,
+        "odometry_left": 0.42,
+        "odometry_right": 0.44,
+        "yaw": 4.2,
+        "deadman_ok": true,
+        "estop": false,
+        "stopped_by_deadman": false,
+        "speed_mode": "medium",
+        "max_speed": 0.35,
+        "camera": {
+          "status": "simulated",
+          "health": "healthy",
+          "fps": 10,
+          "last_frame_age_ms": 110,
+          "resolution": "640x360",
+          "brightness": 0.57,
+          "reconnect_state": "connected"
+        },
+        "lidar": { "status": "simulated", "front_m": 1.02, "min_m": 0.9, "blocked": false }
+      }
+    },
+    {
+      "atMs": 700,
+      "robot": "guard",
+      "frame": {
+        "battery_v": 12.38,
+        "left_cmd": 0.3,
+        "right_cmd": 0.3,
+        "odometry_left": 0.9,
+        "odometry_right": 0.9,
+        "yaw": 2.0,
+        "deadman_ok": true,
+        "estop": false,
+        "stopped_by_deadman": false,
+        "speed_mode": "medium",
+        "max_speed": 0.35,
+        "camera": {
+          "status": "simulated",
+          "health": "healthy",
+          "fps": 10,
+          "last_frame_age_ms": 100,
+          "resolution": "640x360",
+          "brightness": 0.61,
+          "reconnect_state": "connected"
+        },
+        "lidar": { "status": "simulated", "front_m": 0.27, "min_m": 0.24, "blocked": true }
+      }
+    },
+    {
+      "atMs": 950,
+      "robot": "guard",
+      "frame": {
+        "battery_v": 12.37,
+        "left_cmd": 0.2,
+        "right_cmd": 0.2,
+        "odometry_left": 1.1,
+        "odometry_right": 1.1,
+        "yaw": 1.7,
+        "deadman_ok": true,
+        "estop": false,
+        "stopped_by_deadman": false,
+        "speed_mode": "medium",
+        "max_speed": 0.35,
+        "camera": {
+          "status": "simulated",
+          "health": "stale",
+          "fps": 2,
+          "last_frame_age_ms": 2100,
+          "resolution": "640x360",
+          "brightness": 0.49,
+          "reconnect_state": "reconnecting"
+        },
+        "lidar": { "status": "simulated", "front_m": 0.8, "min_m": 0.7, "blocked": false }
+      }
+    },
+    {
+      "atMs": 1200,
+      "robot": "courier",
+      "frame": {
+        "battery_v": 12.27,
+        "left_cmd": 0.2,
+        "right_cmd": 0.18,
+        "odometry_left": 0.78,
+        "odometry_right": 0.82,
+        "yaw": 7.4,
+        "deadman_ok": true,
+        "estop": false,
+        "stopped_by_deadman": false,
+        "speed_mode": "medium",
+        "max_speed": 0.35,
+        "camera": {
+          "status": "simulated",
+          "health": "healthy",
+          "fps": 10,
+          "last_frame_age_ms": 130,
+          "resolution": "640x360",
+          "brightness": 0.55,
+          "reconnect_state": "connected"
+        },
+        "lidar": { "status": "stale", "front_m": 1.1, "min_m": 0.95, "blocked": false }
+      }
+    },
+    {
+      "atMs": 1450,
+      "robot": "guard",
+      "frame": {
+        "battery_v": 12.36,
+        "left_cmd": 0,
+        "right_cmd": 0,
+        "odometry_left": 1.28,
+        "odometry_right": 1.28,
+        "yaw": 2.1,
+        "deadman_ok": true,
+        "estop": false,
+        "stopped_by_deadman": false,
+        "soft_odometry_limited": true,
+        "soft_odometry_limit_m": 1.25,
+        "speed_mode": "low",
+        "max_speed": 0.22,
+        "camera": {
+          "status": "simulated",
+          "health": "healthy",
+          "fps": 10,
+          "last_frame_age_ms": 90,
+          "resolution": "640x360",
+          "brightness": 0.61,
+          "reconnect_state": "connected"
+        },
+        "lidar": { "status": "simulated", "front_m": 0.9, "min_m": 0.8, "blocked": false }
+      }
+    },
+    {
+      "atMs": 1700,
+      "robot": "courier",
+      "frame": {
+        "battery_v": 12.25,
+        "left_cmd": 0,
+        "right_cmd": 0,
+        "odometry_left": 0.86,
+        "odometry_right": 0.88,
+        "yaw": 8,
+        "deadman_ok": true,
+        "estop": true,
+        "stopped_by_deadman": false,
+        "speed_mode": "low",
+        "max_speed": 0.22,
+        "camera": {
+          "status": "simulated",
+          "health": "healthy",
+          "fps": 10,
+          "last_frame_age_ms": 100,
+          "resolution": "640x360",
+          "brightness": 0.54,
+          "reconnect_state": "connected"
+        },
+        "lidar": { "status": "simulated", "front_m": 1.2, "min_m": 1.0, "blocked": false }
+      }
+    }
+  ],
+  "expected": {
+    "events": ["countdown-start", "go", "obstacle-detected", "camera-stale", "lidar-stale", "boundary-warning", "emergency-stop"],
+    "drivers": {
+      "challenger": {
+        "robot": "guard",
+        "lane": "left",
+        "minProgressFt": 4,
+        "cameraStaleCountAtLeast": 1
+      },
+      "opponent": {
+        "robot": "courier",
+        "lane": "right",
+        "minProgressFt": 2,
+        "lidarStaleEvent": true
+      }
+    }
+  }
+}

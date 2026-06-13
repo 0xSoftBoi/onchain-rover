@@ -297,6 +297,40 @@ steps 2 through 7 with the known Hardhat wallets. It is gated by
 `ALLOW_LOCAL_DEV_WALLETS=1` or `ALLOW_FREE_PILOT=1` and never returns private
 keys to the browser.
 
+## Sensor Replay Fixtures
+
+Recorded fixtures let the frontend, pilot HUD, minimap, perception events, and
+trace summaries move without live cameras, motors, or lidar attached.
+
+The default fixture is:
+
+```text
+sidecar/fixtures/sensor-replay/two-lane-heat.json
+```
+
+With the sidecar and local chain running, replay it into a real local round:
+
+```sh
+npm --prefix sidecar run replay:sensors
+```
+
+The replay runner creates a round, uses the local dev wallets to join and lock
+escrow, attaches simulated `guard` and `courier` robot websocket clients, starts
+the countdown, and streams the fixture frames through `WS /ws/robot`. The
+resulting `GET /race/round/:id/telemetry-trace` output drives the same
+HUD-facing state as live telemetry: camera status, lidar status, lane-aware
+progress, safety events, and the event sequence.
+
+For deterministic regression coverage, run:
+
+```sh
+npm --prefix sidecar run e2e:sensor-replay
+```
+
+The e2e uses the same fixture in fast mode and asserts expected trace events,
+camera stale counts, lidar stale detection, lane assignment, and minimum stage
+progress for both drivers.
+
 ## Evidence Packet
 
 The sidecar records round snapshots at `locked`, `started`, `finished`, and
