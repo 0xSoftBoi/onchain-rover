@@ -25,6 +25,7 @@ npm run chain:compile
 npm run chain:test
 npm run e2e:local-race
 npm run e2e:sidecar-round
+npm run e2e:dev-join
 npm run e2e:harness-bridge
 npm run e2e:field-sim
 ```
@@ -62,6 +63,13 @@ sidecar and Hardhat node:
 
 ```bash
 SIDECAR_URL=http://127.0.0.1:4021 npm run e2e:sidecar-round
+```
+
+To prove the laptop-only wallet rehearsal path, where the sidecar opens,
+funds, signs, joins, and locks escrow with local Hardhat wallets:
+
+```bash
+SIDECAR_URL=http://127.0.0.1:4021 npm run e2e:dev-join
 ```
 
 To prove the sidecar bridge against the Rust `robot-harness` simulator:
@@ -102,6 +110,7 @@ after a restart.
 - `POST /race/round/:id/chain/authorization-request`: build race entry and permit typed data for one driver slot.
 - `POST /race/round/:id/chain/join`: submit signed typed data through the facilitator.
 - `POST /race/round/:id/chain/lock`: lock escrow once both drivers joined.
+- `POST /race/round/:id/dev/join-local-wallets`: local-only rehearsal route that claims the two Hardhat wallets, funds them, signs both driver entries in the sidecar, joins them, and optionally locks escrow.
 - `POST /race/round/:id/chain/start`: mark the on-chain race started.
 - `POST /race/round/:id/chain/settle`: finish and settle payout after the local round has a winner.
 - `POST /race/round/:id/chain/cancel`: cancel and refund stakes.
@@ -245,6 +254,7 @@ LOCAL_FACILITATOR_PRIVATE_KEY=0x...
 LOCAL_TOKEN_OWNER_PRIVATE_KEY=0x...
 LOCAL_RACE_AUTH_TTL_SECS=3600
 RACE_NETWORK_FEE_USDC=0.25
+ALLOW_LOCAL_DEV_WALLETS=1
 ```
 
 `/chain/config` never returns private keys.
@@ -263,6 +273,11 @@ laptop LAN address so mobile wallets can reach it.
 6. `started`: chain race starts when the local race starts.
 7. `finished`: local finish records the winner, telemetry evidence, and immutable SHA-256 `proofHash`.
 8. `settled`: facilitator pays the winner and leaves fees in treasury.
+
+For local rehearsal, `POST /race/round/:id/dev/join-local-wallets` can replace
+steps 2 through 5 with the known Hardhat wallets. It is gated by
+`ALLOW_LOCAL_DEV_WALLETS=1` or `ALLOW_FREE_PILOT=1` and never returns private
+keys to the browser.
 
 ## Evidence Packet
 
@@ -310,8 +325,14 @@ http://<laptop-ip>:4021/field.html
 - copy/open phone pilot links for challenger and opponent
 - QR codes for both phones
 - camera detector link for the active round
+- No-Phone Prep for local Hardhat wallet entry without opening two phone wallets
 - durable race history loaded from `GET /race/rounds`
 - replay summary from the persisted evidence packet
+
+No-Phone Prep fills the two known Hardhat wallet addresses, creates a round if
+needed, opens escrow, mints local test tokens, signs both typed-data payloads in
+the sidecar, submits both joins, and locks escrow. Use Local Sim Lock,
+Countdown, and Start Race after that for a laptop-only rehearsal.
 
 The phone links are still camera-first:
 

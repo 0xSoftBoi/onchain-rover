@@ -22,6 +22,7 @@ import * as lb from "./leaderboard.js";
 import * as race from "./race.js";
 import * as chain from "./chain.js";
 import * as evidence from "./evidence.js";
+import * as localDevWallets from "./local-dev-wallets.js";
 import * as robotLink from "./robot-link.js";
 import * as rounds from "./rounds.js";
 import * as settle from "./settle.js";
@@ -432,6 +433,72 @@ app.post("/race/round/:id/chain/lock", async (req, res) => {
   } catch (e: any) { res.status(400).json({ error: e.message }); }
 });
 
+app.post("/race/round/:id/dev/join-local-wallets", async (req, res) => {
+  try {
+    if (!localDevWalletsEnabled()) {
+      return res.status(403).json({
+        error: "local dev wallets require ALLOW_LOCAL_DEV_WALLETS=1 or ALLOW_FREE_PILOT=1",
+      });
+    }
+    const actions: Array<Record<string, unknown>> = [];
+    const fundAmount = String(req.body?.amount ?? "20");
+    const lockChain = req.body?.lockChain !== false;
+    const id = req.params.id;
+
+    let round = ensureLocalDevDriver(id, "challenger");
+    round = ensureLocalDevDriver(id, "opponent");
+
+    const needsJoin = !round.drivers.challenger?.chainJoined || !round.drivers.opponent?.chainJoined;
+    if (needsJoin && round.status !== "accepted" && round.status !== "ready") {
+      throw new Error(`local dev join requires accepted or ready round, got ${round.status}`);
+    }
+
+    if (!round.chainRaceId) {
+      const opened = await chain.openRoundOnChain(round);
+      round = rounds.attachChainRace(id, opened.raceId, opened.tx);
+      actions.push({ type: "open", raceId: opened.raceId, tx: opened.tx });
+    }
+
+    for (const slot of ["challenger", "opponent"] as const) {
+      const driver = round.drivers[slot];
+      if (!driver?.wallet) throw new Error(`missing ${slot} wallet`);
+      if (driver.chainJoined) {
+        actions.push({ type: "skip-join", slot, reason: "already joined" });
+        continue;
+      }
+
+      const funded = await chain.fundLocalWallet(driver.wallet, fundAmount);
+      actions.push({ type: "fund", slot, wallet: funded.wallet, amount: funded.amount, tx: funded.tx });
+
+      const request = await chain.buildRaceEntryRequest(round, slot, driver.wallet);
+      const signed = await localDevWallets.signLocalDevRaceEntry(slot, request);
+      const joined = await chain.joinRoundOnChain({
+        round,
+        slot,
+        entrySignature: signed.entrySignature,
+        permitSignature: signed.permitSignature,
+        entryDeadline: signed.entryDeadline as string,
+        permitDeadline: signed.permitDeadline as string,
+      });
+      round = rounds.markChainJoined(id, slot, joined.tx, {
+        entrySignature: signed.entrySignature,
+        permitSignature: signed.permitSignature,
+      });
+      actions.push({ type: "join", slot, tx: joined.tx });
+    }
+
+    if (lockChain && round.chainStatus === "joined") {
+      const locked = await chain.lockRoundOnChain(round);
+      round = rounds.markChainLocked(id, locked.tx);
+      actions.push({ type: "lock", tx: locked.tx });
+    } else if (lockChain && round.chainStatus === "locked") {
+      actions.push({ type: "skip-lock", reason: "already locked" });
+    }
+
+    res.json({ round, wallets: localDevWallets.localDevWallets(), actions });
+  } catch (e: any) { res.status(400).json({ error: e.message }); }
+});
+
 app.post("/race/round/:id/chain/start", async (req, res) => {
   try {
     const started = await chain.startRoundOnChain(rounds.getRound(req.params.id));
@@ -720,6 +787,7 @@ app.get("/field/preflight", async (req, res) => {
     urls,
     env: {
       allowFreePilot: process.env.ALLOW_FREE_PILOT === "1",
+      allowLocalDevWallets: localDevWalletsEnabled(),
       raceDataDir: process.env.RACE_DATA_DIR ?? "sidecar/data/races",
       publicSidecarUrl: process.env.PUBLIC_SIDECAR_URL ?? null,
       publicLocalChainRpcUrl: process.env.PUBLIC_LOCAL_CHAIN_RPC_URL ?? null,
@@ -737,6 +805,26 @@ app.use((err: any, _req: any, res: any, _next: any) => {
 
 const PORT = Number(process.env.PORT ?? 4021);
 server.listen(PORT, () => console.log(`sidecar on :${PORT} (Arc ${ARC.chainId})`));
+
+function localDevWalletsEnabled() {
+  return process.env.ALLOW_LOCAL_DEV_WALLETS === "1" || process.env.ALLOW_FREE_PILOT === "1";
+}
+
+function ensureLocalDevDriver(roundId: string, slot: rounds.DriverSlot): rounds.Round {
+  const devWallet = localDevWallets.localDevWallet(slot);
+  let round = rounds.getRound(roundId);
+  const currentWallet = round.drivers[slot]?.wallet ?? "";
+  if (!currentWallet) {
+    return rounds.claimSlot(roundId, slot, {
+      wallet: devWallet.address,
+      displayName: devWallet.displayName,
+    });
+  }
+  if (currentWallet.toLowerCase() !== devWallet.address.toLowerCase()) {
+    throw new Error(`${slot} is claimed by ${currentWallet}, not local dev wallet ${devWallet.address}`);
+  }
+  return round;
+}
 
 function requireDriverSlot(value: unknown): rounds.DriverSlot {
   if (value === "challenger" || value === "opponent") return value;

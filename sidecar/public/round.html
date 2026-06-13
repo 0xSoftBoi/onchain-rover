@@ -136,6 +136,7 @@
       <button id="openChain" class="good">Open Escrow</button>
       <button id="fillLocal" class="secondary">Use Local Test Wallets</button>
       <button id="fundDrivers" class="secondary">Fund Driver Wallets</button>
+      <button id="devJoinLocal" class="warn">No-Phone Prep</button>
       <button id="refresh" class="secondary">Refresh</button>
     </div>
   </section>
@@ -432,6 +433,21 @@ async function fundDrivers() {
   return state.round;
 }
 
+async function devJoinLocalWallets() {
+  $("challenger").value = localDefaults.challenger;
+  $("opponent").value = localDefaults.opponent;
+  if (!state.round?.id) await createRound();
+  const result = await postJson(`/race/round/${state.round.id}/dev/join-local-wallets`, {
+    amount: "20",
+    lockChain: true,
+  });
+  for (const action of result.actions || []) {
+    const suffix = action.tx ? ` ${String(action.tx).slice(0, 12)}...` : "";
+    log(`${action.type}${action.slot ? ` ${action.slot}` : ""}${suffix}`);
+  }
+  return result.round;
+}
+
 function walletForSlot(slot) {
   return $("" + slot).value.trim() || state.round?.drivers?.[slot]?.wallet || "";
 }
@@ -519,6 +535,7 @@ $("fillLocal").onclick = () => {
   render();
 };
 $("fundDrivers").onclick = () => step("funded driver wallets", fundDrivers);
+$("devJoinLocal").onclick = () => step("local dev wallets joined and escrow locked", devJoinLocalWallets);
 $("lockChain").onclick = () => step("locked escrow", () => postJson(`/race/round/${state.round.id}/chain/lock`));
 $("lockLocal").onclick = () => step("authorized robots", () => postJson(`/race/round/${state.round.id}/lock`));
 $("lockLocalSim").onclick = () => step("local sim locked", () => postJson(`/race/round/${state.round.id}/lock`, { skipRobotAuth: true }));
