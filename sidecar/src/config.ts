@@ -21,16 +21,14 @@ export const ERC8004 = {
 
 export const ROBOTS = {
   guard: {
-    url: process.env.GUARD_URL ?? "http://192.168.8.71:8000",
+    url: process.env.GUARD_URL ?? "http://172.16.1.29:8000",
     wallet: process.env.GUARD_WALLET ?? "",
-    privyWalletId: process.env.GUARD_PRIVY_WALLET_ID ?? "",
     ens: "guard.rover.eth",
     agentId: process.env.GUARD_AGENT_ID,
   },
   courier: {
-    url: process.env.COURIER_URL ?? "http://192.168.8.72:8000",
+    url: process.env.COURIER_URL ?? "http://172.16.0.105:8000",
     wallet: process.env.COURIER_WALLET ?? "",
-    privyWalletId: process.env.COURIER_PRIVY_WALLET_ID ?? "",
     ens: "courier.rover.eth",
     agentId: process.env.COURIER_AGENT_ID,
   },

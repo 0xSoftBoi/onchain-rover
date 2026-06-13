@@ -11,11 +11,13 @@
 import express from "express";
 import { createGatewayMiddleware } from "@circle-fin/x402-batching/server";
 
+import "./env.js"; // MUST be first — loads dotenv before any env-reading module
 import { ARC, ROBOTS, type RobotName } from "./config.js";
 import * as erc8004 from "./erc8004.js";
 import * as ens from "./ens.js";
 import * as lb from "./leaderboard.js";
 import * as race from "./race.js";
+import * as settle from "./settle.js";
 
 const app = express();
 app.use(express.json());
@@ -83,25 +85,45 @@ app.post("/challenge", (req, res) => {
 });
 
 app.post("/verify-agent", async (req, res) => {
-  // ERC-8004 registered? + AgentBook human-backed? + holds EventPass?
-  // EventPass + AgentBook reads wired tonight; shape is frozen for the demo.
+  // ERC-8004 registered? + AgentBook human-backed? + holds EventPass (on Arc)?
   const { wallet, agentId } = req.body;
+  let holdsPass = false;
+  try { holdsPass = wallet ? await settle.holdsPass(wallet) : false; } catch {}
   res.json({
     wallet, agentId,
     erc8004Registered: Boolean(agentId),
     humanBacked: null,   // TODO: AgentBook read on World Chain 480
-    holdsPass: false,    // first pass through the checkpoint always rejects
+    holdsPass,           // real on-chain EventPass read on Arc
   });
 });
 
+// Robot-to-robot payment: courier transfers the NEGOTIATED USDC to guard on Arc.
 app.post("/pay", async (req, res) => {
-  // Robot-to-robot x402 payment (courier pays guard) via GatewayClient.
-  // TODO tonight: GatewayClient({chain:"arcTestnet", privateKey}) .pay(...)
-  res.json({ todo: "GatewayClient robot-to-robot pay", ...req.body });
+  try {
+    const { from = "courier", to = "guard", amt } = req.body;
+    res.json(await settle.pay(from, to, String(amt)));
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
+// Guard mints the EventPass to the buyer, recording the negotiated price on-chain.
 app.post("/mint-pass", async (req, res) => {
-  res.json({ todo: "EventPass mint on Arc", ...req.body });
+  try {
+    const { robot = "courier", price = "0.50" } = req.body;
+    res.json(await settle.mintPass(robot, String(price)));
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Balances helper (demo dashboard / pre-flight check).
+app.get("/balances", async (_req, res) => {
+  const out: Record<string, string> = {};
+  for (const [n, r] of Object.entries(ROBOTS)) {
+    if (r.wallet) out[n] = (await settle.usdcBalance(r.wallet)).toString();
+  }
+  res.json({ usdc6: out });
 });
 
 app.post("/register-agent", async (req, res) => {
