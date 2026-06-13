@@ -10,6 +10,7 @@
     "start": "tsx src/index.ts",
     "e2e:local-round": "tsx src/e2e-local-round.ts",
     "e2e:dev-join": "tsx src/e2e-dev-join.ts",
+    "e2e:stake-adapter": "tsx src/e2e-stake-adapter.ts",
     "e2e:harness-bridge": "tsx src/e2e-harness-bridge.ts",
     "e2e:field-sim": "tsx src/e2e-field-sim.ts",
     "bridge:harness": "tsx src/harness-bridge.ts",

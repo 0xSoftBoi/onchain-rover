@@ -24,6 +24,7 @@ export type Driver = {
   feePaid: boolean;
   feePayment?: FeePayment;
   stakeAuthorized: boolean;
+  stakeAuthorization?: StakeAuthorization;
   chainJoined?: boolean;
   entrySignature?: string;
   permitSignature?: string;
@@ -44,6 +45,23 @@ export type FeePayment = {
   payer?: string;
   paidAt?: number;
   reconciliationStatus?: "pending" | "reconciled" | "needs-proof" | "failed";
+};
+
+export type StakeAuthorization = {
+  adapter: "base-spend-permission" | "local-chain-escrow" | "manual";
+  status: "verified" | "settled" | "failed";
+  roundId: string;
+  token?: string;
+  spender?: string;
+  amountUsdc: string;
+  amountUnits?: string;
+  permissionHash?: string;
+  permission?: Record<string, unknown>;
+  signature?: string;
+  txHash?: string;
+  verifiedAt?: number;
+  expiresAt?: number;
+  settlement?: Record<string, unknown>;
 };
 
 export type ChainRoundStatus =
@@ -279,6 +297,7 @@ export function authorizeStake(id: string, slot: DriverSlot, authorization?: Rec
   requireJoinable(round);
   const driver = requireDriver(round, slot);
   driver.stakeAuthorized = true;
+  driver.stakeAuthorization = normalizeStakeAuthorization(round, authorization);
   if (authorization?.entrySignature) driver.entrySignature = String(authorization.entrySignature);
   if (authorization?.permitSignature) driver.permitSignature = String(authorization.permitSignature);
   if (authorization?.displayName && !driver.displayName) {
@@ -396,6 +415,14 @@ export function markChainJoined(
     reconciliationStatus: "reconciled",
   };
   driver.stakeAuthorized = true;
+  driver.stakeAuthorization = {
+    adapter: "local-chain-escrow",
+    status: "verified",
+    roundId: round.id,
+    amountUsdc: round.stakeUsdc,
+    txHash: txHash,
+    verifiedAt: paidAt,
+  };
   if (authorization?.entrySignature) driver.entrySignature = authorization.entrySignature;
   if (authorization?.permitSignature) driver.permitSignature = authorization.permitSignature;
   driver.joinedTx = txHash;
@@ -732,9 +759,38 @@ function normalizeFeePayment(round: Round, payment?: Record<string, unknown>): F
   };
 }
 
+function normalizeStakeAuthorization(round: Round, authorization?: Record<string, unknown>): StakeAuthorization {
+  return {
+    adapter: parseStakeAdapter(authorization?.adapter),
+    status: parseStakeStatus(authorization?.status),
+    roundId: firstString(authorization?.roundId, authorization?.round) ?? round.id,
+    token: firstString(authorization?.token),
+    spender: firstString(authorization?.spender),
+    amountUsdc: firstString(authorization?.amountUsdc, authorization?.amount) ?? round.stakeUsdc,
+    amountUnits: firstString(authorization?.amountUnits, authorization?.units),
+    permissionHash: firstString(authorization?.permissionHash, authorization?.hash),
+    permission: plainObject(authorization?.permission),
+    signature: firstString(authorization?.signature),
+    txHash: firstString(authorization?.txHash, authorization?.transactionHash, authorization?.tx),
+    verifiedAt: Number.isFinite(Number(authorization?.verifiedAt)) ? Number(authorization?.verifiedAt) : Date.now(),
+    expiresAt: Number.isFinite(Number(authorization?.expiresAt)) ? Number(authorization?.expiresAt) : undefined,
+    settlement: plainObject(authorization?.settlement),
+  };
+}
+
 function parsePaymentStatus(value: unknown): FeePayment["status"] {
   if (value === "pending" || value === "failed") return value;
   return "paid";
+}
+
+function parseStakeAdapter(value: unknown): StakeAuthorization["adapter"] {
+  if (value === "base-spend-permission" || value === "local-chain-escrow" || value === "manual") return value;
+  return "manual";
+}
+
+function parseStakeStatus(value: unknown): StakeAuthorization["status"] {
+  if (value === "settled" || value === "failed") return value;
+  return "verified";
 }
 
 function parsePaymentSource(
@@ -746,6 +802,11 @@ function parsePaymentSource(
   if (txHash) return "local-chain";
   if (paymentId) return "x402";
   return "manual";
+}
+
+function plainObject(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  return structuredClone(value as Record<string, unknown>);
 }
 
 function firstString(...values: unknown[]): string | undefined {

@@ -27,6 +27,7 @@ import * as localDevWallets from "./local-dev-wallets.js";
 import * as robotLink from "./robot-link.js";
 import * as rounds from "./rounds.js";
 import * as settle from "./settle.js";
+import * as stakeAdapters from "./stake-adapter.js";
 import * as treasuryLedger from "./treasury-ledger.js";
 
 // Never let one bad call take down the demo: log unhandled errors, stay up.
@@ -575,6 +576,33 @@ app.post("/race/round/:id/fee-paid", (req, res) => {
 app.post("/race/round/:id/stake-authorize", (req, res) => {
   try { res.json(rounds.authorizeStake(req.params.id, req.body.slot, req.body.authorization)); }
   catch (e: any) { res.status(400).json({ error: e.message }); }
+});
+
+app.post("/race/round/:id/stake/prepare", (req, res) => {
+  try {
+    const round = rounds.getRound(req.params.id);
+    const slot = requireDriverSlot(req.body.slot);
+    const adapter = stakeAdapters.stakeAdapter(req.body.adapter);
+    res.json(adapter.prepareStake(round, slot, req.body.wallet));
+  } catch (e: any) { res.status(400).json({ error: e.message }); }
+});
+
+app.post("/race/round/:id/stake/verify", async (req, res) => {
+  try {
+    const round = rounds.getRound(req.params.id);
+    const slot = requireDriverSlot(req.body.slot);
+    const adapter = stakeAdapters.stakeAdapter(req.body.adapter);
+    const authorization = await adapter.verifyStake(round, slot, req.body);
+    res.json(rounds.authorizeStake(req.params.id, slot, authorization as Record<string, unknown>));
+  } catch (e: any) { res.status(400).json({ error: e.message }); }
+});
+
+app.get("/race/round/:id/stake/settlement-plan", (req, res) => {
+  try {
+    const round = rounds.getRound(req.params.id);
+    const adapter = stakeAdapters.stakeAdapter(String(req.query.adapter ?? "base-spend-permission"));
+    res.json(adapter.settle(round));
+  } catch (e: any) { res.status(400).json({ error: e.message }); }
 });
 
 app.get("/race/round/:id/calibration", (req, res) => {

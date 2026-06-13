@@ -112,6 +112,9 @@ after a restart.
 - `POST /race/round/:id/chain/join`: submit signed typed data through the facilitator.
 - `POST /race/round/:id/chain/lock`: lock escrow once both drivers joined.
 - `POST /race/round/:id/dev/join-local-wallets`: local-only rehearsal route that claims the two Hardhat wallets, funds them, signs both driver entries in the sidecar, joins them, and optionally locks escrow.
+- `POST /race/round/:id/stake/prepare`: build the Base SpendPermission typed data for one driver stake.
+- `POST /race/round/:id/stake/verify`: verify and record the signed driver stake permission.
+- `GET /race/round/:id/stake/settlement-plan`: after finish, return the loser-only charge, winner payout, and spender execution plan for the verified stake permission.
 - `POST /race/round/:id/chain/start`: mark the on-chain race started.
 - `POST /race/round/:id/chain/settle`: finish and settle payout after the local round has a winner.
 - `POST /race/round/:id/chain/cancel`: cancel and refund stakes.
@@ -255,6 +258,11 @@ LOCAL_FACILITATOR_PRIVATE_KEY=0x...
 LOCAL_TOKEN_OWNER_PRIVATE_KEY=0x...
 LOCAL_RACE_AUTH_TTL_SECS=3600
 RACE_NETWORK_FEE_USDC=0.25
+STAKE_CHAIN_ID=8453
+SPEND_PERMISSION_MANAGER_ADDRESS=0x...
+STAKE_TOKEN_ADDRESS=0x...
+STAKE_SPENDER_ADDRESS=0x...
+STAKE_PERMISSION_TTL_SECS=600
 ALLOW_LOCAL_DEV_WALLETS=1
 ```
 
@@ -269,15 +277,16 @@ laptop LAN address so mobile wallets can reach it.
 1. `challenge`: challenger creates the round in sidecar.
 2. `accepted`: opponent joins the round in sidecar.
 3. `fee paid`: each driver pays the fixed fleet fee through the x402 join route, or the local chain harness records the treasury fee during local rehearsal.
-4. `opened`: sidecar opens the escrow on the local chain.
-5. `joined`: each phone signs entry; facilitator submits both joins.
-6. `locked`: escrow locks; sidecar can authorize robot sessions.
-7. `started`: chain race starts when the local race starts.
-8. `finished`: local finish records the winner, telemetry evidence, and immutable SHA-256 `proofHash`.
-9. `settled`: facilitator pays the winner and leaves fees in treasury.
+4. `stake authorized`: each driver signs a scoped Base SpendPermission for the matched stake, or the local escrow path records the upfront stake lock.
+5. `opened`: sidecar opens the escrow on the local chain.
+6. `joined`: each phone signs entry; facilitator submits both joins.
+7. `locked`: escrow locks; sidecar can authorize robot sessions.
+8. `started`: chain race starts when the local race starts.
+9. `finished`: local finish records the winner, telemetry evidence, and immutable SHA-256 `proofHash`.
+10. `settled`: facilitator pays the winner and leaves fees in treasury.
 
 For local rehearsal, `POST /race/round/:id/dev/join-local-wallets` can replace
-steps 2 through 6 with the known Hardhat wallets. It is gated by
+steps 2 through 7 with the known Hardhat wallets. It is gated by
 `ALLOW_LOCAL_DEV_WALLETS=1` or `ALLOW_FREE_PILOT=1` and never returns private
 keys to the browser.
 
