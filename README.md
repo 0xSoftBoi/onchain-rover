@@ -58,10 +58,25 @@ fake data (`grep` the repo: no `Math.random` nullifiers, no stubs):
   `NewFeedback` volume on the canonical mainnet registry (partition-pruned,
   dry-run guarded); the rover's local Arc reputation shown alongside.
 
-Things that need credentials/funds to *execute* and fail loudly without them
-(no mock fallback): **Arc USDC** (Circle), **`WORLD_APP_ID`** (live ✓),
-**Sepolia ETH** (ENS + CRE consumer), **`cre login`** (CRE simulate),
-**`PRIVY_APP_ID/SECRET`** (live ✓), **GCP creds** (BigQuery).
+## Deployed & live (verified on-chain)
+| Thing | Address / id | Chain |
+|---|---|---|
+| EventPass | `0xb4fd7be40fb501433f403f8ecf46084075af4d77` | Arc 5042002 |
+| ReputationRegistry | `0x876bdebd935696982a906ea51609b518d6902b68` | Arc |
+| Treasury (Ledger-owned) | `0xfd15f8ffc6d82df92b77ded9a2b3535e23a86f43` | Arc |
+| AttestationConsumer (CRE) | `0x0fdb04628c8821d2cd7ebd5cc2d23e1a46a077e3` | Sepolia |
+| World ID app / RP | `app_2c9c29e4…` / `rp_8fe1202b…` (action `rover-gp-bet`) | World 4.0 (on-chain) |
+| Privy wallets (TEE) | guard `0x4C726E70…` · courier `0x76f7c993…` | Arc |
+
+Verified live: real USDC settlements on Arc (incl. **TEE-signed via Privy**),
+EventPass minted, ERC-8004 feedback, a Treasury withdrawal gated by a **physical
+Ledger** (owner transferred to the device + gas-funded), Walrus proofs read back
+& hash-matched, and `GET /attest` serving a verified score for the CRE DON.
+
+Things that still need a credential/login to *execute* (no mock fallback):
+**`cre login`** + `simulate --broadcast` (writes the DON verdict — consumer is
+already deployed and `/attest` serves 85/100), and **GCP creds** for the BigQuery
+leaderboard. Everything else above is live.
 
 ## Layout
 - `robot/` — Python on each Jetson. `api.py` (FastAPI :8000 + MJPEG `/stream` +
@@ -69,15 +84,20 @@ Things that need credentials/funds to *execute* and fail loudly without them
   `camera.py` (shared capture), `perception.py` (Gemini seek + AprilTag),
   `negotiate.py` (Dutch auction), `finish_line.py` (race judge), `gibber.py`
   (GibberLink), `voice.py` (espeak), `proof.py` (Walrus), `checkpoint.py` (Act 1).
+  `GET /attest` = the verifiable work score the Chainlink DON consumes.
 - `sidecar/` — Node 22 + TS (:4021). x402 Gateway paid surface, `identity.ts`
-  (signed challenge + AgentBook), `worldid.ts` (real verify), `settle.ts`
-  (Arc pay/mint/reputation/race/treasury), `ens.ts` (live resolution),
-  `register-ens.ts` / `go-live.ts` / `preflight.ts` scripts. Serves the dashboards.
-- `sidecar/public/` — `index.html` mission control (live feeds, balances, ENS,
-  reputation, 1-click auction+settle), `race.html` (betting), `pilot.html`
-  (joystick), `ledger.html` (clear-sign treasury).
+  (signed challenge + AgentBook), `worldid.ts` (real verify, World ID 4.0 RP),
+  `settle.ts` (Arc pay/mint/reputation/race/treasury, custody router), `privy.ts`
+  (TEE-signed accounts), `cre.ts` (reads the DON verdict), `bigquery.ts` (network
+  reputation), `ens.ts`. Scripts: `deploy-{eventpass,reputation,treasury,consumer}.ts`,
+  `ledger-handover.ts`, `privy-provision.ts`, `register-ens.ts`, `go-live.ts`.
+- `sidecar/public/` — **`wall.html`** the FLEET COMMAND master wall (cinematic
+  big-screen view: cognition stream, on-chain ledger, holo dials, Walrus proof,
+  CRE oracle), `index.html` mission control, `broadcast.html`, `race.html`
+  (betting), `pilot.html` (joystick), `ledger.html` (clear-sign treasury).
 - `contracts/` — `EventPass.sol`, `ReputationRegistry.sol`, `RaceMarket.sol`,
-  `Treasury.sol`, `erc7730/treasury.json`.
+  `Treasury.sol`, `AttestationConsumer.sol`, `erc7730/treasury.json`.
+- `cre-workflow/` — Chainlink CRE workflow (`main.ts` + `config.json` + `SETUP.md`).
 - `DEMO_RUNBOOK.md` — the timed 3-minute script. `docs/JETSON_BRIDGE.md` — bridge spec.
 
 ## Run
@@ -97,4 +117,13 @@ npx tsx src/register-ens.ts             # real ENS on Sepolia
 npx tsx src/go-live.ts                  # deploy contracts + run the full on-chain loop
 ```
 
-Demo at `http://<laptop>:4021/` (mission control) · `/race.html` · `/pilot.html` · `/ledger.html`.
+```bash
+# deep integrations (once their creds/funds are in .env):
+npx tsx src/deploy-consumer.ts          # AttestationConsumer → Sepolia (CRE)
+npx tsx src/privy-provision.ts          # Privy TEE wallets; set CUSTODY=privy
+npx tsx src/ledger-handover.ts 0x<dev>  # treasury owner → your Ledger + gas
+# CRE: see cre-workflow/SETUP.md (cre login + simulate --broadcast)
+```
+
+Demo at `http://<laptop>:4021/wall.html` (the big-screen FLEET COMMAND wall) ·
+`/` (mission control) · `/race.html` · `/pilot.html` · `/ledger.html`.
