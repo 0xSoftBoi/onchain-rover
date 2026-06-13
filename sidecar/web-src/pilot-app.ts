@@ -533,11 +533,11 @@ function openTelemetrySocket(url: string) {
 function configureVideo(driveUrl: string, streamUrl?: string) {
   clearStreamReconnect();
   const base = httpBaseFromDriveUrl(driveUrl);
+  currentStreamUrl = streamUrl || `${base}/stream`;
   if (forceLocalCamera) {
     startLocalCamera();
     return;
   }
-  currentStreamUrl = streamUrl || `${base}/stream`;
   connectRemoteStream();
 }
 
@@ -591,8 +591,7 @@ function cacheBustUrl(value: string): string {
 
 async function startLocalCamera() {
   if (!navigator.mediaDevices?.getUserMedia) {
-    els.videoFallback.textContent = "camera unavailable";
-    els.videoFallback.style.display = "grid";
+    fallbackToRemoteStream("camera unavailable");
     return;
   }
   try {
@@ -611,10 +610,21 @@ async function startLocalCamera() {
     els.video.style.display = "none";
     els.videoFallback.style.display = "none";
   } catch {
-    videoState = "fallback";
-    els.videoFallback.textContent = "camera permission needed";
-    els.videoFallback.style.display = "grid";
+    fallbackToRemoteStream("camera permission needed");
   }
+}
+
+function fallbackToRemoteStream(message: string) {
+  if (currentStreamUrl) {
+    videoState = "reconnecting";
+    els.videoFallback.textContent = `${message}; trying robot camera`;
+    els.videoFallback.style.display = "grid";
+    connectRemoteStream();
+    return;
+  }
+  videoState = "fallback";
+  els.videoFallback.textContent = message;
+  els.videoFallback.style.display = "grid";
 }
 
 function send(left: number, right: number) {
