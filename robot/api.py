@@ -66,6 +66,16 @@ def telemetry():
 
 
 @app.on_event("startup")
+async def _configure_rover():
+    """Raise the firmware motion failsafe (default 3s) so brief command gaps
+    don't cut the motors — belt-and-suspenders with rover.py's sustain thread."""
+    try:
+        _live_rover().set_heartbeat(15000)
+    except Exception as e:
+        print(f"set_heartbeat failed: {e}")
+
+
+@app.on_event("startup")
 async def _start_heartbeat():
     """Announce our current IP to the sidecar every 10s so venue DHCP drift
     never breaks the demo (the sidecar derives our URL from the source IP)."""

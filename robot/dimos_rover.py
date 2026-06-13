@@ -74,10 +74,16 @@ class _HttpDrive:
 
 
 class _SerialDrive:
-    """Opens the ESP32 serial directly. ONLY when api.py is not running."""
+    """Opens the ESP32 serial directly. ONLY when api.py is not running.
+    Uses the native T:13 X/Z command so DimOS Twist maps 1:1 (no hand-rolled
+    diff-drive) — the firmware does the wheel mix + PID."""
     def __init__(self):
         from rover import Rover
         self.r = Rover()
+        self.r.set_heartbeat(15000)
+
+    def drive_xz(self, linear, angular):
+        self.r.drive_xz(linear, angular)
 
     def drive(self, left, right):
         self.r.drive(left, right)
