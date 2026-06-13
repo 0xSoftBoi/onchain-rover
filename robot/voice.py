@@ -3,13 +3,15 @@ import os
 import subprocess
 
 PIPER_MODEL = os.environ.get(
-    "PIPER_MODEL", os.path.expanduser("~/piper/en_US-lessac-medium.onnx"))
+    "PIPER_MODEL", os.path.expanduser("~/piper-tts/en_US-lessac-medium.onnx"))
+PIPER_BIN = os.environ.get(
+    "PIPER_BIN", os.path.expanduser("~/.local/bin/piper"))
 
 
 def say(text: str):
     try:
         p1 = subprocess.Popen(
-            ["piper", "--model", PIPER_MODEL, "--output-raw"],
+            [PIPER_BIN, "--model", PIPER_MODEL, "--output-raw"],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE)
         p2 = subprocess.Popen(
             ["aplay", "-r", "22050", "-f", "S16_LE", "-t", "raw", "-"],
