@@ -130,8 +130,11 @@ let raceEntryComplete = false;
 let controlUrls: { speedMode?: string; stop?: string } = {};
 let stageCalibration: StageCalibration | null = null;
 let stageCalibrationLoaded = false;
-let videoState: "idle" | "streaming" | "fallback" | "local" = "idle";
+let videoState: "idle" | "streaming" | "reconnecting" | "fallback" | "local" = "idle";
 let roundState: PilotRoundState | null = null;
+let currentStreamUrl = "";
+let streamReconnectTimer: number | undefined;
+let streamReconnectAttempts = 0;
 
 const els = {
   robotName: byId("robotName"),
@@ -463,15 +466,27 @@ function openTelemetrySocket(url: string) {
 }
 
 function configureVideo(driveUrl: string, streamUrl?: string) {
+  clearStreamReconnect();
   const base = httpBaseFromDriveUrl(driveUrl);
   if (forceLocalCamera) {
     startLocalCamera();
     return;
   }
-  els.videoFallback.textContent = "camera feed unavailable";
-  els.video.src = streamUrl || `${base}/stream`;
+  currentStreamUrl = streamUrl || `${base}/stream`;
+  connectRemoteStream();
+}
+
+function connectRemoteStream() {
+  if (!currentStreamUrl) return;
+  videoState = streamReconnectAttempts > 0 ? "reconnecting" : "idle";
+  els.videoFallback.textContent = streamReconnectAttempts > 0 ? "camera reconnecting" : "connecting camera";
+  els.videoFallback.style.display = "grid";
+  els.video.classList.add("off");
+  els.video.style.display = "block";
+  els.video.src = cacheBustUrl(currentStreamUrl);
   els.video.onload = () => {
     videoState = "streaming";
+    streamReconnectAttempts = 0;
     els.video.classList.remove("off");
     els.video.style.display = "block";
     els.localVideo.classList.add("off");
@@ -479,14 +494,34 @@ function configureVideo(driveUrl: string, streamUrl?: string) {
     els.videoFallback.style.display = "none";
   };
   els.video.onerror = () => {
-    videoState = started ? "local" : "fallback";
-    els.video.classList.add("off");
-    if (started) {
-      startLocalCamera();
-    } else {
-      els.videoFallback.style.display = "grid";
-    }
+    handleRemoteStreamFailure();
   };
+}
+
+function handleRemoteStreamFailure() {
+  videoState = "reconnecting";
+  els.video.classList.add("off");
+  els.videoFallback.textContent = "camera reconnecting";
+  els.videoFallback.style.display = "grid";
+  scheduleStreamReconnect();
+}
+
+function scheduleStreamReconnect() {
+  clearStreamReconnect();
+  streamReconnectAttempts += 1;
+  const delayMs = Math.min(5000, 700 + streamReconnectAttempts * 800);
+  streamReconnectTimer = window.setTimeout(connectRemoteStream, delayMs);
+}
+
+function clearStreamReconnect() {
+  if (streamReconnectTimer) window.clearTimeout(streamReconnectTimer);
+  streamReconnectTimer = undefined;
+}
+
+function cacheBustUrl(value: string): string {
+  const url = new URL(value, location.href);
+  url.searchParams.set("stream_ts", String(Date.now()));
+  return url.toString();
 }
 
 async function startLocalCamera() {
@@ -643,6 +678,7 @@ function cameraHealth(frame: TelemetryFrame): { label: string; tone: "" | "ok" |
   if (forceLocalCamera || videoState === "local") {
     return { label: camera?.status ? `local/${camera.status}` : "local", tone: "ok" };
   }
+  if (videoState === "reconnecting") return { label: "reconnect", tone: "warn" };
   if (videoState === "fallback") return { label: "missing", tone: "bad" };
 
   const age = camera?.last_frame_age_ms ?? frame.raw_frame_age_ms ?? frame.sensors?.raw_frame?.age_ms;

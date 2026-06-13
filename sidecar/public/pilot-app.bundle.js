@@ -66,6 +66,9 @@ var stageCalibration = null;
 var stageCalibrationLoaded = false;
 var videoState = "idle";
 var roundState = null;
+var currentStreamUrl = "";
+var streamReconnectTimer;
+var streamReconnectAttempts = 0;
 var els = {
   robotName: byId("robotName"),
   conn: byId("conn"),
@@ -359,15 +362,26 @@ function openTelemetrySocket(url) {
   };
 }
 function configureVideo(driveUrl, streamUrl) {
+  clearStreamReconnect();
   const base = httpBaseFromDriveUrl(driveUrl);
   if (forceLocalCamera) {
     startLocalCamera();
     return;
   }
-  els.videoFallback.textContent = "camera feed unavailable";
-  els.video.src = streamUrl || `${base}/stream`;
+  currentStreamUrl = streamUrl || `${base}/stream`;
+  connectRemoteStream();
+}
+function connectRemoteStream() {
+  if (!currentStreamUrl) return;
+  videoState = streamReconnectAttempts > 0 ? "reconnecting" : "idle";
+  els.videoFallback.textContent = streamReconnectAttempts > 0 ? "camera reconnecting" : "connecting camera";
+  els.videoFallback.style.display = "grid";
+  els.video.classList.add("off");
+  els.video.style.display = "block";
+  els.video.src = cacheBustUrl(currentStreamUrl);
   els.video.onload = () => {
     videoState = "streaming";
+    streamReconnectAttempts = 0;
     els.video.classList.remove("off");
     els.video.style.display = "block";
     els.localVideo.classList.add("off");
@@ -375,14 +389,30 @@ function configureVideo(driveUrl, streamUrl) {
     els.videoFallback.style.display = "none";
   };
   els.video.onerror = () => {
-    videoState = started ? "local" : "fallback";
-    els.video.classList.add("off");
-    if (started) {
-      startLocalCamera();
-    } else {
-      els.videoFallback.style.display = "grid";
-    }
+    handleRemoteStreamFailure();
   };
+}
+function handleRemoteStreamFailure() {
+  videoState = "reconnecting";
+  els.video.classList.add("off");
+  els.videoFallback.textContent = "camera reconnecting";
+  els.videoFallback.style.display = "grid";
+  scheduleStreamReconnect();
+}
+function scheduleStreamReconnect() {
+  clearStreamReconnect();
+  streamReconnectAttempts += 1;
+  const delayMs = Math.min(5e3, 700 + streamReconnectAttempts * 800);
+  streamReconnectTimer = window.setTimeout(connectRemoteStream, delayMs);
+}
+function clearStreamReconnect() {
+  if (streamReconnectTimer) window.clearTimeout(streamReconnectTimer);
+  streamReconnectTimer = void 0;
+}
+function cacheBustUrl(value) {
+  const url = new URL(value, location.href);
+  url.searchParams.set("stream_ts", String(Date.now()));
+  return url.toString();
 }
 async function startLocalCamera() {
   if (!navigator.mediaDevices?.getUserMedia) {
@@ -518,6 +548,7 @@ function cameraHealth(frame) {
   if (forceLocalCamera || videoState === "local") {
     return { label: camera?.status ? `local/${camera.status}` : "local", tone: "ok" };
   }
+  if (videoState === "reconnecting") return { label: "reconnect", tone: "warn" };
   if (videoState === "fallback") return { label: "missing", tone: "bad" };
   const age = camera?.last_frame_age_ms ?? frame.raw_frame_age_ms ?? frame.sensors?.raw_frame?.age_ms;
   const health = camera?.health ?? deriveCameraHealth(camera?.status, age);
