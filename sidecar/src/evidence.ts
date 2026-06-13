@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 
 import type { RobotName } from "./config.js";
 import * as robotLink from "./robot-link.js";
+import * as raceStore from "./race-store.js";
 import type { DriverSlot, Round } from "./rounds.js";
 
 type Hex32 = `0x${string}`;
@@ -13,7 +14,7 @@ type EvidenceEvent = {
   round: ReturnType<typeof sanitizeRound>;
 };
 
-type EvidenceRecord = {
+export type EvidenceRecord = {
   roundId: string;
   createdAtMs: number;
   updatedAtMs: number;
@@ -56,6 +57,7 @@ type FinishDetectionInput = {
 };
 
 const records = new Map<string, EvidenceRecord>();
+for (const record of raceStore.loadEvidenceRecords()) records.set(record.roundId, record);
 
 export function recordRoundSnapshot(round: Round, event: EvidenceEventName): EvidenceRecord {
   const record = ensureRecord(round.id);
@@ -66,6 +68,7 @@ export function recordRoundSnapshot(round: Round, event: EvidenceEventName): Evi
     round: sanitizeRound(round),
   });
   record.packetHash = hashEvidencePacket(record);
+  raceStore.saveEvidence(record, `evidence.${event}`);
   return structuredClone(record);
 }
 
@@ -82,6 +85,7 @@ export function finalizeResultProof(round: Round, operatorProof?: Record<string,
     record.proofHash = sha256Hex(record.resultProofCanonical);
   }
   record.packetHash = hashEvidencePacket(record);
+  raceStore.saveEvidence(record, "evidence.result_finalized");
   return {
     proofHash: record.proofHash,
     evidenceHash: record.packetHash,
@@ -115,6 +119,7 @@ export function recordFinishDetection(round: Round, input: FinishDetectionInput)
   record.updatedAtMs = detection.receivedAtMs;
   record.finishDetections.push(detection);
   record.packetHash = hashEvidencePacket(record);
+  raceStore.saveEvidence(record, "evidence.finish_detection");
   return structuredClone(detection);
 }
 
@@ -124,13 +129,19 @@ export function listFinishDetections(round: Round): FinishDetectionEvent[] {
 
 export function getEvidence(round: Round) {
   const record = ensureRecord(round.id);
-  if (!record.packetHash) record.packetHash = hashEvidencePacket(record);
+  if (!record.packetHash) {
+    record.packetHash = hashEvidencePacket(record);
+    raceStore.saveEvidence(record, "evidence.hash_refreshed");
+  }
   return evidenceResponse(record);
 }
 
 export function getEvidenceHash(round: Round) {
   const record = ensureRecord(round.id);
-  if (!record.packetHash) record.packetHash = hashEvidencePacket(record);
+  if (!record.packetHash) {
+    record.packetHash = hashEvidencePacket(record);
+    raceStore.saveEvidence(record, "evidence.hash_refreshed");
+  }
   return {
     roundId: round.id,
     proofHash: record.proofHash ?? round.proofHash ?? null,

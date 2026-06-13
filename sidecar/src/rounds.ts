@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { ROBOTS, type RobotName } from "./config.js";
+import * as raceStore from "./race-store.js";
 
 export type RoundStatus =
   | "challenge"
@@ -99,6 +100,7 @@ type ClaimSlotInput = {
 };
 
 const rounds = new Map<string, Round>();
+for (const round of raceStore.loadRounds()) rounds.set(round.id, round);
 
 const DEFAULT_STAKE_USDC = "1.00";
 const DEFAULT_FEE_USDC = process.env.RACE_NETWORK_FEE_USDC ?? "0.25";
@@ -150,7 +152,7 @@ export function createRound(input: CreateRoundInput): Round {
     },
   };
   rounds.set(round.id, round);
-  return snapshot(round);
+  return persistSnapshot(round, "round.created");
 }
 
 export function acceptRound(id: string, input: AcceptRoundInput): Round {
@@ -171,7 +173,7 @@ export function acceptRound(id: string, input: AcceptRoundInput): Round {
   };
   round.status = "accepted";
   round.acceptedAt = Date.now();
-  return snapshot(round);
+  return persistSnapshot(round, "round.accepted");
 }
 
 export function claimSlot(id: string, slot: DriverSlot, input: ClaimSlotInput): Round {
@@ -205,7 +207,7 @@ export function claimSlot(id: string, slot: DriverSlot, input: ClaimSlotInput): 
     round.status = "accepted";
     round.acceptedAt = Date.now();
   }
-  return snapshot(round);
+  return persistSnapshot(round, `round.${slot}_claimed`);
 }
 
 export function markFeePaid(id: string, slot: DriverSlot, payment?: Record<string, unknown>): Round {
@@ -217,7 +219,7 @@ export function markFeePaid(id: string, slot: DriverSlot, payment?: Record<strin
     driver.displayName ??= String(payment.displayName ?? "");
   }
   updateReady(round);
-  return snapshot(round);
+  return persistSnapshot(round, `round.${slot}_fee_paid`);
 }
 
 export function authorizeStake(id: string, slot: DriverSlot, authorization?: Record<string, unknown>): Round {
@@ -231,7 +233,7 @@ export function authorizeStake(id: string, slot: DriverSlot, authorization?: Rec
     driver.displayName = String(authorization.displayName);
   }
   updateReady(round);
-  return snapshot(round);
+  return persistSnapshot(round, `round.${slot}_stake_authorized`);
 }
 
 export async function lockRound(id: string, robotUrl: (name: RobotName) => string): Promise<Round> {
@@ -243,7 +245,7 @@ export async function lockRound(id: string, robotUrl: (name: RobotName) => strin
   round.status = "locked";
   round.lockedAt = Date.now();
   await authorizeRobots(round, robotUrl);
-  return snapshot(round);
+  return persistSnapshot(round, "round.locked");
 }
 
 export function lockRoundLocal(id: string): Round {
@@ -254,7 +256,7 @@ export function lockRoundLocal(id: string): Round {
   }
   round.status = "locked";
   round.lockedAt = Date.now();
-  return snapshot(round);
+  return persistSnapshot(round, "round.locked");
 }
 
 export function startCountdown(id: string): Round {
@@ -264,7 +266,7 @@ export function startCountdown(id: string): Round {
   round.status = "countdown";
   round.countdownStartedAt = now;
   round.roundStartsAt = now + round.countdownSecs * 1000;
-  return snapshot(round);
+  return persistSnapshot(round, "round.countdown_started");
 }
 
 export function startRace(id: string): Round {
@@ -273,7 +275,7 @@ export function startRace(id: string): Round {
   if ((round.roundStartsAt ?? 0) > Date.now()) throw new Error("countdown has not finished");
   round.status = "racing";
   round.startedAt = Date.now();
-  return snapshot(round);
+  return persistSnapshot(round, "round.started");
 }
 
 export function finishRound(id: string, winner: DriverSlot, proof?: Record<string, unknown>): Round {
@@ -285,14 +287,14 @@ export function finishRound(id: string, winner: DriverSlot, proof?: Record<strin
   round.finishedAt = Date.now();
   round.finishMs = round.finishedAt - (round.startedAt ?? round.finishedAt);
   round.proof = proof;
-  return snapshot(round);
+  return persistSnapshot(round, "round.finished");
 }
 
 export function markEvidenceHashes(id: string, proofHash?: string | null, evidenceHash?: string | null): Round {
   const round = getMutableRound(id);
   if (proofHash) round.proofHash = proofHash;
   if (evidenceHash) round.evidenceHash = evidenceHash;
-  return snapshot(round);
+  return persistSnapshot(round, "round.evidence_hashes");
 }
 
 export function attachChainRace(id: string, chainRaceId: string, txHash: string): Round {
@@ -304,7 +306,7 @@ export function attachChainRace(id: string, chainRaceId: string, txHash: string)
   round.chainStatus = "opened";
   round.txHashes ??= {};
   round.txHashes.open = txHash;
-  return snapshot(round);
+  return persistSnapshot(round, "round.chain_opened");
 }
 
 export function markChainJoined(
@@ -327,7 +329,7 @@ export function markChainJoined(
   const opponent = round.drivers.opponent;
   round.chainStatus = challenger?.chainJoined && opponent?.chainJoined ? "joined" : "opened";
   updateReady(round);
-  return snapshot(round);
+  return persistSnapshot(round, `round.${slot}_chain_joined`);
 }
 
 export function markChainLocked(id: string, txHash: string): Round {
@@ -336,7 +338,7 @@ export function markChainLocked(id: string, txHash: string): Round {
   round.chainStatus = "locked";
   round.txHashes ??= {};
   round.txHashes.lock = txHash;
-  return snapshot(round);
+  return persistSnapshot(round, "round.chain_locked");
 }
 
 export function markChainStarted(id: string, txHash: string): Round {
@@ -345,7 +347,7 @@ export function markChainStarted(id: string, txHash: string): Round {
   round.chainStatus = "started";
   round.txHashes ??= {};
   round.txHashes.start = txHash;
-  return snapshot(round);
+  return persistSnapshot(round, "round.chain_started");
 }
 
 export function markChainFinished(id: string, txHash: string): Round {
@@ -354,7 +356,7 @@ export function markChainFinished(id: string, txHash: string): Round {
   round.chainStatus = "finished";
   round.txHashes ??= {};
   round.txHashes.finish = txHash;
-  return snapshot(round);
+  return persistSnapshot(round, "round.chain_finished");
 }
 
 export function markChainSettled(id: string, txHash: string): Round {
@@ -367,7 +369,7 @@ export function markChainSettled(id: string, txHash: string): Round {
   round.settledAt = Date.now();
   round.txHashes ??= {};
   round.txHashes.settle = txHash;
-  return snapshot(round);
+  return persistSnapshot(round, "round.chain_settled");
 }
 
 export function markChainCanceled(id: string, txHash: string, reason = "canceled on-chain"): Round {
@@ -378,7 +380,7 @@ export function markChainCanceled(id: string, txHash: string, reason = "canceled
   round.cancelReason = reason;
   round.txHashes ??= {};
   round.txHashes.cancel = txHash;
-  return snapshot(round);
+  return persistSnapshot(round, "round.chain_canceled");
 }
 
 export function cancelRound(id: string, reason = "canceled"): Round {
@@ -389,7 +391,7 @@ export function cancelRound(id: string, reason = "canceled"): Round {
   round.status = "canceled";
   round.canceledAt = Date.now();
   round.cancelReason = reason;
-  return snapshot(round);
+  return persistSnapshot(round, "round.canceled");
 }
 
 export function getRound(id: string): Round {
@@ -482,4 +484,9 @@ function clampInt(value: number | undefined, min: number, max: number, fallback:
 
 function snapshot(round: Round): Round {
   return structuredClone(round);
+}
+
+function persistSnapshot(round: Round, kind: string): Round {
+  raceStore.saveRound(round, kind);
+  return snapshot(round);
 }

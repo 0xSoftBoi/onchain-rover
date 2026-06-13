@@ -9,3 +9,4 @@ chain/artifacts/
 chain/cache/
 chain/deployments/
 chain/.local-node.log
+sidecar/data/

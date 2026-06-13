@@ -14,6 +14,7 @@ addresses for the sidecar, and proves the entry/fee/payout path without robots.
 - `sidecar/src/robot-link.ts`: sidecar-owned robot bridge for phone controls, telemetry, and deadman stop behavior.
 - `sidecar/src/sim-robot.ts`: simulator client that connects to the sidecar bridge as `guard` or `courier`.
 - `sidecar/src/evidence.ts`: canonical race evidence packets and SHA-256 proof hashes.
+- `sidecar/src/race-store.ts`: local durable race ledger under `sidecar/data/races`.
 - `sidecar/web-src/pilot-app.ts`: camera-first phone UI; race payment appears only as a modal when a `round` query parameter is present.
 
 ## Commands
@@ -54,8 +55,8 @@ SIDECAR_URL=http://127.0.0.1:4021 FINISH_ROBOTS=guard,courier \
 ```
 
 To prove the sidecar, local chain, robot bridge, detector ingestion, evidence,
-and settlement path together against an already running sidecar and Hardhat
-node:
+settlement path, and durable race ledger together against an already running
+sidecar and Hardhat node:
 
 ```bash
 SIDECAR_URL=http://127.0.0.1:4021 npm run e2e:sidecar-round
@@ -63,6 +64,19 @@ SIDECAR_URL=http://127.0.0.1:4021 npm run e2e:sidecar-round
 
 The deploy step writes `sidecar/src/generated/contracts.local.json`. Re-run it
 whenever the local chain is reset.
+
+## Durable Race Ledger
+
+The sidecar writes local race history to `sidecar/data/races/<roundId>/`:
+
+- `round.json`: latest replayable round state, without pilot tokens.
+- `evidence.json`: lifecycle snapshots, finish detections, proof hash, and packet hash.
+- `events.jsonl`: append-only event log for round and evidence transitions.
+
+Set `RACE_DATA_DIR=/tmp/onchain-rover-races` to keep test runs isolated. On
+boot, the sidecar reloads persisted rounds and evidence records so
+`GET /race/rounds`, `GET /race/round/:id`, and the evidence routes still work
+after a restart.
 
 ## Sidecar Routes
 

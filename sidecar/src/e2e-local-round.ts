@@ -1,5 +1,8 @@
 import { WebSocket } from "ws";
+import { readFileSync } from "node:fs";
 import { privateKeyToAccount, type PrivateKeyAccount } from "viem/accounts";
+
+import * as raceStore from "./race-store.js";
 
 type DriverSlot = "challenger" | "opponent";
 type RobotName = "guard" | "courier";
@@ -89,6 +92,7 @@ async function main() {
   round = await postJson(`/race/round/${round.id}/chain/settle`);
   const evidence = await getJson(`/race/round/${round.id}/evidence/hash`);
   const treasury = await getJson("/treasury/local");
+  assertPersistedLedger(round, evidence);
 
   robot.close();
 
@@ -99,6 +103,7 @@ async function main() {
   console.log(`  status:       ${round.status}/${round.chainStatus}`);
   console.log(`  proofHash:    ${evidence.proofHash}`);
   console.log(`  evidenceHash: ${evidence.evidenceHash}`);
+  console.log(`  persisted:    ${raceStore.persistedRoundPaths(round.id).dir}`);
   console.log(`  treasury:     ${treasury.totalFees} local units`);
 }
 
@@ -250,6 +255,35 @@ async function postJson(path: string, body: Record<string, unknown> = {}) {
   const json = await res.json().catch(() => ({}));
   if (!res.ok || json.error) throw new Error(json.error || `${path} failed ${res.status}`);
   return json;
+}
+
+function assertPersistedLedger(round: any, evidence: any) {
+  const paths = raceStore.persistedRoundPaths(round.id);
+  const persistedRound = readJson(paths.round);
+  const persistedEvidence = readJson(paths.evidence);
+  const events = readFileSync(paths.events, "utf8");
+
+  if (persistedRound.status !== "settled") throw new Error("persisted round is not settled");
+  if (persistedRound.chainStatus !== "settled") throw new Error("persisted chain round is not settled");
+  if (persistedRound.proofHash !== evidence.proofHash) throw new Error("persisted proof hash mismatch");
+  if (persistedRound.evidenceHash !== evidence.evidenceHash) throw new Error("persisted evidence hash mismatch");
+  if (persistedRound.drivers?.challenger?.token || persistedRound.drivers?.opponent?.token) {
+    throw new Error("persisted round leaked a pilot token");
+  }
+  if (persistedEvidence.proofHash !== evidence.proofHash) throw new Error("persisted evidence proof hash mismatch");
+  if (persistedEvidence.packetHash !== evidence.evidenceHash) {
+    throw new Error("persisted evidence packet hash mismatch");
+  }
+  if (!events.includes("\"kind\":\"round.chain_settled\"")) {
+    throw new Error("persisted event log is missing chain settlement");
+  }
+  if (!events.includes("\"kind\":\"evidence.result_finalized\"")) {
+    throw new Error("persisted event log is missing finalized evidence");
+  }
+}
+
+function readJson(path: string): any {
+  return JSON.parse(readFileSync(path, "utf8"));
 }
 
 function rebaseWsUrl(value: string) {
