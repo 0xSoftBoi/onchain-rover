@@ -11,6 +11,7 @@ type PilotSession = {
   token: string;
   robot: RobotName;
   expiresAt: number;
+  notBeforeMs?: number;
   speedMode: SpeedMode;
   lastCmdAt: number;
   lastPilotSeenAt: number;
@@ -148,7 +149,7 @@ export function installRobotLink(app: Express, server: Server) {
 export function authorizePilotSession(
   robot: RobotName,
   publicBaseUrl: string,
-  opts: { ttlSecs?: number; speedMode?: SpeedMode } = {},
+  opts: { ttlSecs?: number; speedMode?: SpeedMode; notBeforeMs?: number } = {},
 ) {
   const runtime = runtimeFor(robot);
   retireExpiredSessions(runtime);
@@ -163,6 +164,7 @@ export function authorizePilotSession(
     token,
     robot,
     expiresAt: Date.now() + ttlSecs * 1000,
+    notBeforeMs: opts.notBeforeMs,
     speedMode,
     lastCmdAt: 0,
     lastPilotSeenAt: 0,
@@ -333,6 +335,9 @@ function requireSession(runtime: RobotRuntime, token: string): PilotSession {
   if (Date.now() > session.expiresAt) {
     runtime.sessions.delete(token);
     throw new Error("pilot session expired");
+  }
+  if (session.notBeforeMs && Date.now() < session.notBeforeMs) {
+    throw new Error("round has not started");
   }
   return session;
 }

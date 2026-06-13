@@ -587,6 +587,35 @@ app.post("/race/round/:id/cancel", (req, res) => {
   catch (e: any) { res.status(400).json({ error: e.message }); }
 });
 
+app.post("/race/round/:id/pilot/session", (req, res) => {
+  try {
+    const round = rounds.getRound(req.params.id);
+    const slot = requireDriverSlot(req.body.slot);
+    const driver = round.drivers[slot];
+    if (!driver?.robot) throw new Error(`missing robot for ${slot}`);
+    if (!driver.feePaid || !driver.stakeAuthorized) throw new Error(`${slot} has not joined the round`);
+    if (round.chainRaceId && !driver.chainJoined) throw new Error(`${slot} has not joined on-chain`);
+    if (!["locked", "countdown", "racing"].includes(round.status)) {
+      throw new Error("round must be locked before pilot delegation");
+    }
+    if (round.status === "locked" && !round.roundStartsAt) {
+      throw new Error("countdown has not been scheduled");
+    }
+    if (process.env.ALLOW_FREE_PILOT !== "1") {
+      throw new Error("round pilot delegation requires ALLOW_FREE_PILOT=1 in the local harness");
+    }
+    const publicBaseUrl = process.env.PUBLIC_SIDECAR_URL
+      || `${req.protocol}://${req.get("host")}`;
+    const ttlSecs = Math.max(30, round.durationSecs + round.countdownSecs + 30);
+    const notBeforeMs = round.status === "racing" ? undefined : round.roundStartsAt;
+    res.json(robotLink.authorizePilotSession(driver.robot, publicBaseUrl, {
+      ttlSecs,
+      speedMode: robotLink.parseSpeedMode(req.body.speed_mode) ?? "medium",
+      notBeforeMs,
+    }));
+  } catch (e: any) { res.status(400).json({ error: e.message }); }
+});
+
 // Free pilot session (gated by ALLOW_FREE_PILOT). This local harness path
 // issues a sidecar bridge token; paid production sessions can keep using the
 // lower-latency direct robot path until the bridge is promoted there too.

@@ -1,3 +1,44 @@
+// web-src/signer.ts
+function injectedWalletSigner(provider = window.ethereum) {
+  if (!provider) throw new Error("EVM wallet required");
+  return {
+    id: "injected-eip1193",
+    label: "Browser Wallet",
+    async connect() {
+      const accounts = await provider.request({ method: "eth_requestAccounts" });
+      const wallet = accounts[0];
+      if (!wallet) throw new Error("wallet account unavailable");
+      return wallet;
+    },
+    async ensureChain(chain) {
+      try {
+        await provider.request({
+          method: "wallet_switchEthereumChain",
+          params: [{ chainId: chain.chainIdHex }]
+        });
+      } catch (err) {
+        const code = typeof err === "object" && err && "code" in err ? Number(err.code) : 0;
+        if (code !== 4902) throw err;
+        await provider.request({
+          method: "wallet_addEthereumChain",
+          params: [{
+            chainId: chain.chainIdHex,
+            chainName: chain.name,
+            rpcUrls: [chain.rpcUrl],
+            nativeCurrency: chain.nativeCurrency
+          }]
+        });
+      }
+    },
+    async signTypedData(wallet, data) {
+      return provider.request({
+        method: "eth_signTypedData_v4",
+        params: [wallet, JSON.stringify(data)]
+      });
+    }
+  };
+}
+
 // web-src/pilot-app.ts
 var params = new URLSearchParams(location.search);
 var robotName = params.get("robot") || "courier";
@@ -100,6 +141,19 @@ async function authorize() {
       stopUrl: `${robotUrl}/stop`
     };
   }
+  if (roundId) {
+    const res2 = await fetch(`/race/round/${roundId}/pilot/session`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ slot: driverSlot, speed_mode: speedMode })
+    });
+    const body2 = await res2.json();
+    if (!res2.ok || body2.error) throw new Error(body2.error || `round pilot session failed ${res2.status}`);
+    return {
+      ...body2,
+      telemetryWs: body2.telemetryWs || (body2.driveWs ? deriveTelemetryWs(body2.driveWs) : void 0)
+    };
+  }
   const res = await fetch("/pilot/dev-authorize", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -139,12 +193,9 @@ async function connect() {
 }
 async function completeRaceEntryIfNeeded() {
   if (!roundId || raceEntryComplete) return;
-  const provider = window.ethereum;
-  if (!provider) throw new Error("wallet required for race entry");
-  setModalStatus("Connecting wallet...");
-  const accounts = await provider.request({ method: "eth_requestAccounts" });
-  const wallet = accounts[0];
-  if (!wallet) throw new Error("wallet account unavailable");
+  const signer = injectedWalletSigner();
+  setModalStatus(`Connecting ${signer.label}...`);
+  const wallet = await signer.connect();
   setModalStatus("Claiming driver slot...");
   await postJson(`/race/round/${roundId}/claim-slot`, {
     slot: driverSlot,
@@ -157,17 +208,11 @@ async function completeRaceEntryIfNeeded() {
     slot: driverSlot,
     wallet
   });
-  await ensureWalletChain(provider, request.chain);
+  await signer.ensureChain(request.chain);
   setModalStatus("Sign race entry...");
-  const entrySignature = await provider.request({
-    method: "eth_signTypedData_v4",
-    params: [wallet, JSON.stringify(request.entry)]
-  });
+  const entrySignature = await signer.signTypedData(wallet, request.entry);
   setModalStatus("Sign token permit...");
-  const permitSignature = await provider.request({
-    method: "eth_signTypedData_v4",
-    params: [wallet, JSON.stringify(request.permit)]
-  });
+  const permitSignature = await signer.signTypedData(wallet, request.permit);
   setModalStatus("Submitting race entry...");
   await postJson(`/race/round/${roundId}/chain/join`, {
     slot: driverSlot,
@@ -178,26 +223,6 @@ async function completeRaceEntryIfNeeded() {
   });
   raceEntryComplete = true;
   setModalStatus("Race entry confirmed", "ok");
-}
-async function ensureWalletChain(provider, chain) {
-  try {
-    await provider.request({
-      method: "wallet_switchEthereumChain",
-      params: [{ chainId: chain.chainIdHex }]
-    });
-  } catch (err) {
-    const code = typeof err === "object" && err && "code" in err ? Number(err.code) : 0;
-    if (code !== 4902) throw err;
-    await provider.request({
-      method: "wallet_addEthereumChain",
-      params: [{
-        chainId: chain.chainIdHex,
-        chainName: chain.name,
-        rpcUrls: [chain.rpcUrl],
-        nativeCurrency: chain.nativeCurrency
-      }]
-    });
-  }
 }
 async function postJson(url, body) {
   const res = await fetch(url, {

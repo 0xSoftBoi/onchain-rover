@@ -67,9 +67,27 @@
   }
   .qr canvas { width:140px; height:140px; }
   .log { max-height:160px; overflow:auto; white-space:pre-wrap; color:var(--dim); font-size:12px; }
+  .history { display:grid; gap:8px; max-height:260px; overflow:auto; }
+  .history-row {
+    display:grid; grid-template-columns:86px 1fr auto; gap:10px; align-items:center;
+    min-height:44px; padding:8px; border:1px solid var(--line); border-radius:8px;
+    background:var(--panel2);
+  }
+  .history-row button { min-height:30px; }
+  .history-main { min-width:0; overflow:hidden; }
+  .history-main b, .history-main span { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .history-main span { color:var(--dim); font-size:12px; }
+  .replay {
+    display:grid; gap:8px; max-height:260px; overflow:auto; padding:10px;
+    border:1px solid var(--line); border-radius:8px; background:#0b1118;
+  }
+  .replay-item { display:grid; grid-template-columns:105px minmax(0,1fr); gap:8px; }
+  .replay-item span:first-child { color:var(--dim); }
+  .replay-item span:last-child { overflow-wrap:anywhere; }
   @media (max-width:820px) {
     header { display:block; }
     .grid, .grid3, .links { grid-template-columns:1fr; }
+    .history-row { grid-template-columns:1fr; }
     .kv { grid-template-columns:1fr; }
   }
 </style>
@@ -172,6 +190,15 @@
   </section>
 
   <section>
+    <h2>Detector Links</h2>
+    <div class="actions">
+      <a class="button secondary" id="cameraDetector" target="_blank" rel="noreferrer">Camera Detector</a>
+      <button class="secondary" id="copyCameraDetector">Copy Camera Detector</button>
+    </div>
+    <div class="sub" style="margin-top:8px">Use the laptop or phone camera detector for finish-line evidence. Lidar adapters post to the same finish-detection route.</div>
+  </section>
+
+  <section>
     <h2>Race Controls</h2>
     <div class="actions">
       <button id="lockChain" class="good">Lock Escrow</button>
@@ -191,6 +218,16 @@
   </section>
 
   <section>
+    <h2>Race History</h2>
+    <div class="history" id="history"></div>
+  </section>
+
+  <section>
+    <h2>Replay</h2>
+    <div class="replay" id="replay"></div>
+  </section>
+
+  <section>
     <h2>Activity</h2>
     <div class="log" id="log"></div>
   </section>
@@ -199,7 +236,7 @@
 <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.4/build/qrcode.min.js"></script>
 <script>
 const $ = (id) => document.getElementById(id);
-const state = { round: null, chain: null, treasury: null, evidence: null, detections: [] };
+const state = { round: null, chain: null, treasury: null, evidence: null, detections: [], rounds: [], replay: null };
 const localDefaults = {
   challenger: "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
   opponent: "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
@@ -236,6 +273,15 @@ function pilotLink(slot) {
   url.searchParams.set("round", state.round.id);
   url.searchParams.set("slot", slot);
   url.searchParams.set("camera", "local");
+  return url.toString();
+}
+
+function detectorLink() {
+  if (!state.round?.id) return "";
+  const url = new URL("/finish-camera.html", $("publicSidecar").value.trim() || location.origin);
+  url.searchParams.set("round", state.round.id);
+  url.searchParams.set("robot", "guard");
+  url.searchParams.set("slot", "challenger");
   return url.toString();
 }
 
@@ -293,30 +339,40 @@ function render() {
   $("opponentLink").textContent = opponentUrl || "Create a round first.";
   $("challengerOpen").href = challengerUrl || "#";
   $("opponentOpen").href = opponentUrl || "#";
+  const cameraDetectorUrl = detectorLink();
+  $("cameraDetector").href = cameraDetectorUrl || "#";
   renderQr("challengerQr", challengerUrl);
   renderQr("opponentQr", opponentUrl);
+  renderHistory();
+  renderReplay();
 }
 
 async function refresh() {
   try {
-    const [config, chain, treasury] = await Promise.all([
+    const [config, chain, treasury, roundsBody] = await Promise.all([
       getJson("/chain/config").catch(() => null),
       getJson("/chain/health").catch((err) => ({ ok: false, error: err.message })),
       getJson("/treasury/local").catch(() => null),
+      getJson("/race/rounds").catch(() => ({ rounds: [] })),
     ]);
     state.config = config;
     state.chain = chain;
     state.treasury = treasury;
+    state.rounds = roundsBody?.rounds || [];
     if (config?.sidecarUrl && !$("publicSidecar").value.trim()) $("publicSidecar").value = config.sidecarUrl;
     if (!$("publicSidecar").value.trim()) $("publicSidecar").value = location.origin;
+    const requestedRound = new URLSearchParams(location.search).get("round");
+    if (!state.round?.id && requestedRound) state.round = { id: requestedRound };
     if (state.round?.id) {
       state.round = await getJson(`/race/round/${state.round.id}`);
       state.evidence = await getJson(`/race/round/${state.round.id}/evidence/hash`).catch(() => null);
       const finishDetections = await getJson(`/race/round/${state.round.id}/finish-detections`).catch(() => null);
       state.detections = finishDetections?.detections || [];
+      state.replay = await getJson(`/race/round/${state.round.id}/evidence`).catch(() => null);
     } else {
       state.evidence = null;
       state.detections = [];
+      state.replay = null;
     }
     render();
   } catch (err) {
@@ -356,6 +412,7 @@ async function createRound() {
     });
   }
   log(`round ${state.round.id} accepted`);
+  history.replaceState(null, "", `?round=${encodeURIComponent(state.round.id)}`);
   render();
 }
 
@@ -377,6 +434,71 @@ async function fundDrivers() {
 
 function walletForSlot(slot) {
   return $("" + slot).value.trim() || state.round?.drivers?.[slot]?.wallet || "";
+}
+
+function renderHistory() {
+  const root = $("history");
+  root.textContent = "";
+  if (!state.rounds.length) {
+    root.textContent = "No persisted rounds yet.";
+    return;
+  }
+  for (const round of state.rounds.slice(0, 20)) {
+    const row = document.createElement("div");
+    row.className = "history-row";
+    const pill = document.createElement("span");
+    pill.className = `pill ${round.status === "settled" ? "ok" : round.status === "canceled" ? "badText" : ""}`;
+    pill.textContent = round.status;
+    const main = document.createElement("div");
+    main.className = "history-main";
+    const title = document.createElement("b");
+    title.textContent = `${round.id} · ${round.winner || "no winner"}`;
+    const detail = document.createElement("span");
+    detail.textContent = `${new Date(round.createdAt).toLocaleString()} · chain ${round.chainStatus || "not-opened"} · ${round.proofHash || "no proof"}`;
+    main.append(title, detail);
+    const load = document.createElement("button");
+    load.className = "secondary";
+    load.textContent = "Load";
+    load.onclick = () => loadRound(round.id);
+    row.append(pill, main, load);
+    root.append(row);
+  }
+}
+
+function renderReplay() {
+  const root = $("replay");
+  root.textContent = "";
+  const evidence = state.replay?.evidence;
+  if (!evidence) {
+    root.textContent = "Load or settle a round to inspect replay evidence.";
+    return;
+  }
+  const rows = [
+    ["round", evidence.roundId],
+    ["proof", evidence.proofHash || "-"],
+    ["packet", evidence.evidenceHash || "-"],
+    ["detections", String(evidence.finishDetections?.length || 0)],
+    ["lifecycle", (evidence.lifecycle || []).map((event) => `${event.event}@${new Date(event.atMs).toLocaleTimeString()}`).join(" -> ") || "-"],
+  ];
+  const latest = evidence.finishDetections?.at?.(-1);
+  if (latest) {
+    rows.push(["latest", `${latest.slot} ${latest.source}/${latest.method} ${Math.round(latest.confidence * 100)}%`]);
+  }
+  for (const [label, value] of rows) {
+    const row = document.createElement("div");
+    row.className = "replay-item";
+    row.innerHTML = `<span></span><span></span>`;
+    row.children[0].textContent = label;
+    row.children[1].textContent = value;
+    root.append(row);
+  }
+}
+
+async function loadRound(roundId) {
+  state.round = await getJson(`/race/round/${roundId}`);
+  history.replaceState(null, "", `?round=${encodeURIComponent(roundId)}`);
+  log(`loaded round ${roundId}`);
+  await refresh();
 }
 
 async function step(label, fn) {
@@ -436,6 +558,12 @@ $("copyProof").onclick = async () => {
   if (!hash) return;
   await navigator.clipboard.writeText(hash);
   log("copied proof hash");
+};
+$("copyCameraDetector").onclick = async () => {
+  const url = detectorLink();
+  if (!url) return;
+  await navigator.clipboard.writeText(url);
+  log("copied camera detector link");
 };
 
 document.querySelectorAll("[data-copy]").forEach((button) => {

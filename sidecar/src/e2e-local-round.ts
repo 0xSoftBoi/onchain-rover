@@ -62,7 +62,10 @@ async function main() {
   round = await postJson(`/race/round/${round.id}/start`);
   round = await postJson(`/race/round/${round.id}/chain/start`);
 
-  const pilot = await postJson("/pilot/dev-authorize", { robot: "guard", speed_mode: "high" });
+  const pilot = await postJson(`/race/round/${round.id}/pilot/session`, {
+    slot: "challenger",
+    speed_mode: "high",
+  });
   const drive = await openDriveSocket(pilot.driveWs, pilot.token);
   const threshold = robot.waitForOdometry(finishThreshold);
   const driveTimer = setInterval(() => {

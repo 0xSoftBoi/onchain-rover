@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+<title>Finish Camera</title>
+<style>
+  :root {
+    --bg:#05070a; --txt:#f2f7fb; --muted:#9baec2; --line:rgba(223,235,255,.18);
+    --ok:#49d17d; --warn:#f2c14e; --bad:#ff5d5d; --panel:rgba(7,12,18,.72);
+  }
+  * { box-sizing:border-box; }
+  html, body {
+    margin:0; min-height:100%; background:var(--bg); color:var(--txt);
+    font:13px/1.35 ui-monospace, Menlo, Consolas, monospace;
+  }
+  body { display:grid; place-items:center; }
+  main {
+    position:relative; width:min(100vw, calc(100dvh * 9 / 16)); height:min(100dvh, calc(100vw * 16 / 9));
+    aspect-ratio:9 / 16; overflow:hidden; background:#020305;
+  }
+  video, canvas { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; }
+  video { z-index:1; }
+  canvas { z-index:2; pointer-events:none; }
+  .bar {
+    position:absolute; left:10px; right:10px; top:10px; z-index:4; display:flex;
+    justify-content:space-between; align-items:flex-start; gap:8px;
+  }
+  .panel {
+    min-width:0; max-width:62%; padding:8px 9px; border:1px solid var(--line);
+    border-radius:8px; background:var(--panel); backdrop-filter:blur(10px);
+    text-shadow:0 1px 2px #000;
+  }
+  .panel b, .panel span { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .panel span { color:var(--muted); }
+  .actions { display:flex; flex-wrap:wrap; gap:6px; justify-content:flex-end; }
+  button {
+    min-height:34px; padding:7px 9px; border:1px solid var(--line);
+    border-radius:7px; background:rgba(20,28,38,.82); color:var(--txt); font:inherit;
+  }
+  button.primary { background:var(--ok); color:#041008; border-color:var(--ok); font-weight:800; }
+  button.bad { background:var(--bad); border-color:var(--bad); color:#fff; }
+  .meter {
+    position:absolute; left:10px; right:10px; bottom:12px; z-index:4; height:40px;
+    border:1px solid var(--line); border-radius:8px; background:var(--panel);
+    overflow:hidden; backdrop-filter:blur(10px);
+  }
+  .fill { height:100%; width:0%; background:var(--warn); transition:width .08s linear; }
+  .meter span { position:absolute; inset:0; display:grid; place-items:center; text-shadow:0 1px 2px #000; }
+  .ok { color:var(--ok); } .badText { color:var(--bad); }
+</style>
+</head>
+<body>
+<main>
+  <video id="video" muted playsinline autoplay></video>
+  <canvas id="overlay"></canvas>
+  <div class="bar">
+    <div class="panel">
+      <b id="title">finish camera</b>
+      <span id="status">idle</span>
+    </div>
+    <div class="actions">
+      <button id="arm" class="primary">ARM</button>
+      <button id="trigger">TRIGGER</button>
+      <button id="flip">FLIP</button>
+      <button id="stop" class="bad">STOP</button>
+    </div>
+  </div>
+  <div class="meter"><div class="fill" id="fill"></div><span id="score">0%</span></div>
+</main>
+<script>
+const params = new URLSearchParams(location.search);
+const roundId = params.get("round");
+let robot = params.get("robot") || "guard";
+let slot = params.get("slot") || "";
+let armed = false;
+let posted = false;
+let facingMode = "environment";
+let stream = null;
+let previous = null;
+const threshold = Number(params.get("threshold") || "18");
+const cooldownMs = 1500;
+let lastTriggerAt = 0;
+
+const video = document.getElementById("video");
+const overlay = document.getElementById("overlay");
+const ctx = overlay.getContext("2d", { willReadFrequently: true });
+const fill = document.getElementById("fill");
+const score = document.getElementById("score");
+const status = document.getElementById("status");
+const title = document.getElementById("title");
+
+title.textContent = `${roundId || "no-round"} · ${slot || robot}`;
+
+async function startCamera() {
+  if (stream) stream.getTracks().forEach((track) => track.stop());
+  stream = await navigator.mediaDevices.getUserMedia({
+    video: { facingMode, width: { ideal: 1280 }, height: { ideal: 720 } },
+    audio: false,
+  });
+  video.srcObject = stream;
+  status.textContent = "camera ready";
+}
+
+function sizeCanvas() {
+  const rect = overlay.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  overlay.width = Math.max(1, Math.floor(rect.width * dpr));
+  overlay.height = Math.max(1, Math.floor(rect.height * dpr));
+}
+
+function draw() {
+  sizeCanvas();
+  const w = overlay.width;
+  const h = overlay.height;
+  ctx.clearRect(0, 0, w, h);
+  if (video.readyState >= 2) ctx.drawImage(video, 0, 0, w, h);
+
+  const lineX = Math.floor(w * Number(params.get("line") || "0.5"));
+  const strip = Math.max(8, Math.floor(w * 0.025));
+  const x = Math.max(0, lineX - Math.floor(strip / 2));
+  const width = Math.min(strip, w - x);
+  const pixels = ctx.getImageData(x, 0, width, h);
+  const motion = motionScore(pixels.data);
+  previous = new Uint8ClampedArray(pixels.data);
+
+  ctx.clearRect(0, 0, w, h);
+  ctx.strokeStyle = armed ? "#49d17d" : "#f2c14e";
+  ctx.lineWidth = Math.max(3, Math.floor(w * 0.008));
+  ctx.beginPath();
+  ctx.moveTo(lineX, 0);
+  ctx.lineTo(lineX, h);
+  ctx.stroke();
+  ctx.fillStyle = "rgba(0,0,0,.34)";
+  ctx.fillRect(0, 0, w, 38 * (window.devicePixelRatio || 1));
+
+  const pct = Math.min(100, Math.round((motion / threshold) * 100));
+  fill.style.width = `${pct}%`;
+  score.textContent = `${pct}%`;
+  if (armed && !posted && motion >= threshold && Date.now() - lastTriggerAt > cooldownMs) {
+    postDetection("line-motion", motion, pixels.data);
+  }
+  requestAnimationFrame(draw);
+}
+
+function motionScore(data) {
+  if (!previous || previous.length !== data.length) return 0;
+  let total = 0;
+  for (let i = 0; i < data.length; i += 16) {
+    total += Math.abs(data[i] - previous[i]);
+    total += Math.abs(data[i + 1] - previous[i + 1]);
+    total += Math.abs(data[i + 2] - previous[i + 2]);
+  }
+  return total / (data.length / 16) / 3;
+}
+
+async function postDetection(method, motion, data) {
+  if (!roundId) {
+    status.textContent = "round missing";
+    status.className = "badText";
+    return;
+  }
+  posted = true;
+  lastTriggerAt = Date.now();
+  const frameHash = await hashBytes(data);
+  const body = {
+    robot: robot || undefined,
+    slot: slot || undefined,
+    source: "browser-finish-camera",
+    method,
+    confidence: Math.max(0.5, Math.min(0.99, motion / (threshold * 1.6))),
+    frameHash,
+    metrics: { motion, threshold, line: Number(params.get("line") || "0.5") },
+  };
+  const res = await fetch(`/race/round/${encodeURIComponent(roundId)}/finish-detection`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok || json.error) {
+    posted = false;
+    status.textContent = json.error || `post failed ${res.status}`;
+    status.className = "badText";
+    return;
+  }
+  status.textContent = `posted ${json.detection?.slot || slot || robot}`;
+  status.className = "ok";
+}
+
+async function hashBytes(data) {
+  const digest = await crypto.subtle.digest("SHA-256", data);
+  return `0x${Array.from(new Uint8Array(digest)).map((byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+}
+
+document.getElementById("arm").onclick = () => {
+  armed = !armed;
+  posted = false;
+  status.textContent = armed ? "armed" : "idle";
+  document.getElementById("arm").textContent = armed ? "ARMED" : "ARM";
+};
+document.getElementById("trigger").onclick = () => postDetection("operator-camera-trigger", threshold, previous || new Uint8ClampedArray([0]));
+document.getElementById("flip").onclick = async () => {
+  facingMode = facingMode === "environment" ? "user" : "environment";
+  await startCamera();
+};
+document.getElementById("stop").onclick = () => {
+  armed = false;
+  stream?.getTracks().forEach((track) => track.stop());
+  status.textContent = "stopped";
+};
+
+startCamera().then(() => requestAnimationFrame(draw)).catch((err) => {
+  status.textContent = err.message || "camera failed";
+  status.className = "badText";
+});
+</script>
+</body>
+</html>

@@ -9,8 +9,11 @@
     "dev": "tsx watch src/index.ts",
     "start": "tsx src/index.ts",
     "e2e:local-round": "tsx src/e2e-local-round.ts",
+    "e2e:harness-bridge": "tsx src/e2e-harness-bridge.ts",
+    "bridge:harness": "tsx src/harness-bridge.ts",
     "sim:robot": "tsx src/sim-robot.ts",
     "sim:finish": "tsx src/sim-finish-detector.ts",
+    "detector:lidar": "tsx src/lidar-finish-detector.ts",
     "build:ledger": "esbuild web-src/ledger.ts --bundle --format=esm --outfile=public/ledger.bundle.js --platform=browser --define:global=globalThis",
     "build:pilot": "esbuild web-src/pilot-app.ts --bundle --format=esm --outfile=public/pilot-app.bundle.js --platform=browser --define:global=globalThis"
   },

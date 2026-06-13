@@ -25,6 +25,7 @@ npm run chain:compile
 npm run chain:test
 npm run e2e:local-race
 npm run e2e:sidecar-round
+npm run e2e:harness-bridge
 ```
 
 For manual sidecar development:
@@ -60,6 +61,12 @@ sidecar and Hardhat node:
 
 ```bash
 SIDECAR_URL=http://127.0.0.1:4021 npm run e2e:sidecar-round
+```
+
+To prove the sidecar bridge against the Rust `robot-harness` simulator:
+
+```bash
+SIDECAR_URL=http://127.0.0.1:4021 npm run e2e:harness-bridge
 ```
 
 The deploy step writes `sidecar/src/generated/contracts.local.json`. Re-run it
@@ -264,3 +271,86 @@ The canonical JSON for that result proof is hashed with SHA-256. The resulting
 After settlement, the sidecar also updates the append-only evidence packet hash
 as `evidenceHash`. The on-chain race result uses `proofHash`; `evidenceHash`
 tracks the full local packet, including the later settled snapshot.
+
+## Operator Lobby
+
+Open the lobby from a laptop on the same network:
+
+```text
+http://<laptop-ip>:4021/lobby.html
+```
+
+`/lobby.html` redirects to `/round.html`, which now handles:
+
+- create and accept a local two-driver round
+- copy/open phone pilot links for challenger and opponent
+- QR codes for both phones
+- camera detector link for the active round
+- durable race history loaded from `GET /race/rounds`
+- replay summary from the persisted evidence packet
+
+The phone links are still camera-first:
+
+```text
+/pilot.html?robot=guard&round=<roundId>&slot=challenger&camera=local
+/pilot.html?robot=courier&round=<roundId>&slot=opponent&camera=local
+```
+
+## Signers And Delegated Pilot Sessions
+
+`sidecar/web-src/signer.ts` defines the browser wallet signer boundary. The
+pilot app currently uses an injected EIP-1193 wallet for:
+
+- wallet connect
+- local chain switch/add
+- race-entry typed data
+- token permit typed data
+
+After a slot joins the race, the pilot page asks the sidecar for a delegated
+round pilot session:
+
+```text
+POST /race/round/:id/pilot/session
+```
+
+The sidecar only issues that bridge token when the slot is joined/authorized and
+the round is locked, counting down, or racing. If a locked round has no
+scheduled start, the endpoint refuses to mint a drivable token.
+
+## Camera And Lidar Finish Adapters
+
+Browser camera detector:
+
+```text
+http://<laptop-ip>:4021/finish-camera.html?round=<roundId>&robot=guard&slot=challenger
+```
+
+It uses the laptop or phone camera, watches a vertical finish-line strip, hashes
+the trigger frame, and posts a `finish-detection` event. It also has a manual
+trigger button for operator-confirmed test runs.
+
+Lidar telemetry detector:
+
+```bash
+cd sidecar
+SIDECAR_URL=http://127.0.0.1:4021 LIDAR_ROBOTS=guard,courier \
+  LIDAR_FRONT_M=0.3 npm run detector:lidar -- <roundId>
+```
+
+It listens to `/ws/telemetry`, watches `lidar.front_m` or `lidar.min_m`, and
+posts a finish detection when the threshold is crossed.
+
+## Robot Harness Bridge
+
+The Rust `robot-harness` exposes its own `/ws/drive` and `/ws/telemetry`
+contract. `sidecar/src/harness-bridge.ts` adapts that to the sidecar's
+`/ws/robot` bridge socket:
+
+```bash
+cd sidecar
+ROBOT=guard ROBOT_URL=http://127.0.0.1:8000 \
+  SIDECAR_URL=http://127.0.0.1:4021 npm run bridge:harness
+```
+
+Use `npm run e2e:harness-bridge` to start a Rust simulator, attach the adapter,
+drive through the sidecar bridge, and assert telemetry/odometry flows back.

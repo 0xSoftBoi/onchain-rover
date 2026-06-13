@@ -1,3 +1,5 @@
+import { injectedWalletSigner, type WalletChain } from "./signer.js";
+
 type SpeedMode = "low" | "medium" | "high";
 
 type AuthResponse = {
@@ -12,10 +14,6 @@ type AuthResponse = {
 };
 
 type DriverSlot = "challenger" | "opponent";
-
-type EthereumProvider = {
-  request(args: { method: string; params?: unknown[] | Record<string, unknown> }): Promise<unknown>;
-};
 
 type TelemetryFrame = {
   ts_ms?: number;
@@ -50,7 +48,6 @@ type NippleInstance = {
 
 declare global {
   interface Window {
-    ethereum?: EthereumProvider;
     nipplejs?: {
       create(opts: {
         zone: HTMLElement;
@@ -176,6 +173,20 @@ async function authorize(): Promise<AuthResponse> {
     };
   }
 
+  if (roundId) {
+    const res = await fetch(`/race/round/${roundId}/pilot/session`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ slot: driverSlot, speed_mode: speedMode }),
+    });
+    const body = await res.json();
+    if (!res.ok || body.error) throw new Error(body.error || `round pilot session failed ${res.status}`);
+    return {
+      ...body,
+      telemetryWs: body.telemetryWs || (body.driveWs ? deriveTelemetryWs(body.driveWs) : undefined),
+    };
+  }
+
   const res = await fetch("/pilot/dev-authorize", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -217,13 +228,10 @@ async function connect() {
 
 async function completeRaceEntryIfNeeded() {
   if (!roundId || raceEntryComplete) return;
-  const provider = window.ethereum;
-  if (!provider) throw new Error("wallet required for race entry");
+  const signer = injectedWalletSigner();
 
-  setModalStatus("Connecting wallet...");
-  const accounts = await provider.request({ method: "eth_requestAccounts" }) as string[];
-  const wallet = accounts[0];
-  if (!wallet) throw new Error("wallet account unavailable");
+  setModalStatus(`Connecting ${signer.label}...`);
+  const wallet = await signer.connect();
 
   setModalStatus("Claiming driver slot...");
   await postJson(`/race/round/${roundId}/claim-slot`, {
@@ -239,29 +247,18 @@ async function completeRaceEntryIfNeeded() {
     slot: driverSlot,
     wallet,
   }) as {
-    chain: {
-      chainIdHex: string;
-      rpcUrl: string;
-      name: string;
-      nativeCurrency: { name: string; symbol: string; decimals: number };
-    };
+    chain: WalletChain;
     entry: { message: { deadline: string } };
     permit: { message: { deadline: string } };
   };
 
-  await ensureWalletChain(provider, request.chain);
+  await signer.ensureChain(request.chain);
 
   setModalStatus("Sign race entry...");
-  const entrySignature = await provider.request({
-    method: "eth_signTypedData_v4",
-    params: [wallet, JSON.stringify(request.entry)],
-  }) as string;
+  const entrySignature = await signer.signTypedData(wallet, request.entry);
 
   setModalStatus("Sign token permit...");
-  const permitSignature = await provider.request({
-    method: "eth_signTypedData_v4",
-    params: [wallet, JSON.stringify(request.permit)],
-  }) as string;
+  const permitSignature = await signer.signTypedData(wallet, request.permit);
 
   setModalStatus("Submitting race entry...");
   await postJson(`/race/round/${roundId}/chain/join`, {
@@ -273,32 +270,6 @@ async function completeRaceEntryIfNeeded() {
   });
   raceEntryComplete = true;
   setModalStatus("Race entry confirmed", "ok");
-}
-
-async function ensureWalletChain(provider: EthereumProvider, chain: {
-  chainIdHex: string;
-  rpcUrl: string;
-  name: string;
-  nativeCurrency: { name: string; symbol: string; decimals: number };
-}) {
-  try {
-    await provider.request({
-      method: "wallet_switchEthereumChain",
-      params: [{ chainId: chain.chainIdHex }],
-    });
-  } catch (err) {
-    const code = typeof err === "object" && err && "code" in err ? Number((err as { code: unknown }).code) : 0;
-    if (code !== 4902) throw err;
-    await provider.request({
-      method: "wallet_addEthereumChain",
-      params: [{
-        chainId: chain.chainIdHex,
-        chainName: chain.name,
-        rpcUrls: [chain.rpcUrl],
-        nativeCurrency: chain.nativeCurrency,
-      }],
-    });
-  }
 }
 
 async function postJson(url: string, body: unknown): Promise<unknown> {

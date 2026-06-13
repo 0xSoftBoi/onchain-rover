@@ -9,6 +9,7 @@
     "chain:deploy": "npm --prefix chain run deploy",
     "chain:export": "npm --prefix chain run export",
     "e2e:local-race": "bash scripts/e2e-local-race.sh",
-    "e2e:sidecar-round": "npm --prefix sidecar run e2e:local-round"
+    "e2e:sidecar-round": "npm --prefix sidecar run e2e:local-round",
+    "e2e:harness-bridge": "npm --prefix sidecar run e2e:harness-bridge"
   }
 }
