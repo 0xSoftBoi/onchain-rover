@@ -57,6 +57,9 @@
   .oc .det { color:var(--txt); }
   .oc .tx a { font-size:13px; color:var(--blu); }
   .oc .ts { color:var(--dim); font-size:11px; }
+  .ocstats { display:flex; gap:30px; padding:6px 4px 16px; }
+  .ocstats .big { font-size:34px; font-weight:800; color:var(--grn); line-height:1; }
+  .ocstats .lbl { color:var(--dim); font-size:11px; text-transform:uppercase; letter-spacing:.5px; margin-top:4px; }
 </style>
 </head>
 <body>
@@ -67,6 +70,11 @@
 <div class="wrap">
   <div class="card hero">
     <h2><span class="live"></span>⛓️ ON-CHAIN SETTLEMENT — LIVE on Arc</h2>
+    <div class="ocstats">
+      <div><div class="big" id="oc-usdc">$0.00</div><div class="lbl">USDC settled on-chain</div></div>
+      <div><div class="big" id="oc-count">0</div><div class="lbl">transactions</div></div>
+      <div><div class="big" id="oc-agents">2</div><div class="lbl">robot agents</div></div>
+    </div>
     <div id="onchain"><span class="addr">waiting for the first settlement…</span></div>
   </div>
 
@@ -216,6 +224,8 @@ async function pollOnchain(){
   try {
     const f = await (await fetch("/onchain/feed")).json();
     const ex = $("explorer").href.replace(/\/$/,'');
+    if (typeof f.settledUsdc === "number") $("oc-usdc").textContent = "$" + f.settledUsdc.toFixed(2);
+    if (typeof f.count === "number") $("oc-count").textContent = f.count;
     if (!f.events || !f.events.length) return;
     $("onchain").innerHTML = f.events.map(e => {
       const secs = Math.max(0, Math.round((Date.now() - e.t)/1000));

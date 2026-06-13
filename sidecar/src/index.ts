@@ -47,13 +47,27 @@ const mockStatus = () => ({
     guard: { name: "guard.roverfleet.eth", chain: "Sepolia", address: ROBOTS.guard.wallet, resolved: true, agentContext: "physical rover agent; skills: guard,deliver,race" },
     courier: { name: "courier.roverfleet.eth", chain: "Sepolia", address: ROBOTS.courier.wallet, resolved: true, agentContext: "physical rover agent; skills: guard,deliver,race" } },
 });
-const mockFeed = () => ({ events: [
-  { t: Date.now() - 4000, kind: "PAY", detail: "courier → guard $1.25 USDC", tx: "0xa1b2c3d4e5f6072839ab", explorer: ex("0xa1b2c3d4e5f6072839ab") },
-  { t: Date.now() - 3500, kind: "MINT", detail: "EventPass → courier @ $1.25", tx: "0xbb22cc33dd44ee55ff66", explorer: ex("0xbb22cc33dd44ee55ff66") },
-  { t: Date.now() - 3000, kind: "REPUTATION", detail: "guard rated 95 (skill: guard)", tx: "0xcc33dd44ee55ff6601aa", explorer: ex("0xcc33dd44ee55ff6601aa") },
-  { t: Date.now() - 1500, kind: "BET", detail: "$2 on courier (World-verified human)", tx: "0xdd44ee55ff6601aa02bb", explorer: ex("0xdd44ee55ff6601aa02bb") },
-  { t: Date.now() - 500, kind: "RACE SETTLE", detail: "courier wins · proof DhDkmlGywO…", tx: "0xee55ff6601aa02bb03cc", explorer: ex("0xee55ff6601aa02bb03cc") },
-]});
+// Live-growing mock feed: seeds a few, then appends a new settlement every few
+// seconds so the LIVE panel visibly streams (design review). Mock-only.
+const _mockEvents: OnchainEvent[] = [];
+let _mockTx = 0xa1b2c3;
+const _rndTx = () => "0x" + (_mockTx++).toString(16).padStart(6, "0") + "e5f6072839abcd";
+const _mockKinds: [string, () => string, number][] = [
+  ["PAY", () => "courier → guard $0.50 USDC", 0.5],
+  ["MINT", () => "EventPass → courier @ $1.25", 0],
+  ["REPUTATION", () => "guard rated 95 (skill: guard)", 0],
+  ["BET", () => `$${[1, 2, 5][_mockTx % 3]} on ${_mockTx % 2 ? "courier" : "guard"} (World-verified)`, [1, 2, 5][_mockTx % 3]],
+  ["RACE SETTLE", () => "courier wins · proof DhDkmlGywO…", 0],
+];
+let _mockKindIdx = 0;
+function _pushMock() {
+  const [kind, det, usdc] = _mockKinds[_mockKindIdx++ % _mockKinds.length];
+  const tx = _rndTx();
+  _mockEvents.unshift({ t: Date.now(), kind, detail: det(), tx, explorer: ex(tx), usdc });
+  if (_mockEvents.length > 60) _mockEvents.pop();
+}
+function mockFeedLive() { return feedPayload(_mockEvents); }
+if (MOCK) { for (let i = 0; i < 8; i++) _pushMock(); setInterval(_pushMock, 4000); }
 const mockRep = () => ({
   guard: { ens: "guard.roverfleet.eth", count: 7, avg: 95 },
   courier: { ens: "courier.roverfleet.eth", count: 4, avg: 91 },
@@ -93,14 +107,20 @@ app.post("/robot/heartbeat", (req, res) => {
 });
 
 // --- on-chain settlement feed (live "what's settling" for the dashboard) ---
-type OnchainEvent = { t: number; kind: string; tx?: string; detail: string; explorer?: string };
+type OnchainEvent = { t: number; kind: string; tx?: string; detail: string; explorer?: string; usdc?: number };
 const onchainFeed: OnchainEvent[] = [];
-function logOnchain(kind: string, detail: string, tx?: string) {
-  onchainFeed.unshift({ t: Date.now(), kind, detail, tx,
+function logOnchain(kind: string, detail: string, tx?: string, usdc?: number) {
+  onchainFeed.unshift({ t: Date.now(), kind, detail, tx, usdc,
     explorer: tx ? `${ARC.explorer}/tx/${tx}` : undefined });
-  if (onchainFeed.length > 50) onchainFeed.pop();
+  if (onchainFeed.length > 80) onchainFeed.pop();
 }
-app.get("/onchain/feed", (_req, res) => res.json(MOCK ? mockFeed() : { events: onchainFeed.slice(0, 30) }));
+function feedPayload(events: OnchainEvent[]) {
+  const settledUsdc = events.reduce((s, e) => s + (e.usdc || 0), 0);
+  return { events: events.slice(0, 40), settledUsdc: +settledUsdc.toFixed(2),
+           count: events.length };
+}
+app.get("/onchain/feed", (_req, res) =>
+  res.json(MOCK ? mockFeedLive() : feedPayload(onchainFeed)));
 
 app.get("/robot/registry", (_req, res) => {
   res.json(Object.fromEntries([...liveRobots.entries()].map(([k, v]) =>
@@ -172,7 +192,7 @@ app.post("/race/bet", async (req, res) => {
     if (process.env.RACEMARKET_ADDRESS && onChainRaceId !== null) {
       const racerIdx = race.raceState()?.racers.indexOf(racer as RobotName) ?? 0;
       onchain = await settle.betOnChain(onChainRaceId, racerIdx, String(amount), v.nullifier);
-      logOnchain("BET", `$${amount} on ${racer} (World-verified human)`, onchain?.tx);
+      logOnchain("BET", `$${amount} on ${racer} (World-verified human)`, onchain?.tx, Number(amount));
     }
     const odds = race.placeBet({ bettor, racer, amount: Number(amount), nullifier: v.nullifier });
     res.json({ ...odds, onchain });
@@ -371,7 +391,7 @@ app.post("/race/auction/start", async (req, res) => {
       if (doSettle) {
         const pay = await settle.pay("courier", "guard", String(deal.price));
         st.pay = pay.tx;
-        logOnchain("PAY", `courier → guard $${deal.price} USDC`, pay.tx);
+        logOnchain("PAY", `courier → guard $${deal.price} USDC`, pay.tx, Number(deal.price));
         const mint = await settle.mintPass("courier", String(deal.price));
         st.mint = mint.tx;
         logOnchain("MINT", `EventPass → courier @ $${deal.price}`, mint.tx);
