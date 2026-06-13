@@ -86,6 +86,25 @@ if (!treasury) {
   console.log(`   (add to .env: TREASURY_CONTRACT=${treasury})`);
 }
 
+// 2d. deploy RaceMarket (judge = guard, operator = treasury/Ledger)
+let market = process.env.RACEMARKET_ADDRESS;
+if (!market) {
+  console.log("deploying RaceMarket...");
+  const art = JSON.parse(readFileSync(
+    new URL("../../out/RaceMarket.sol/RaceMarket.json", import.meta.url), "utf8"));
+  const account = privateKeyToAccount(process.env.GUARD_PRIVATE_KEY as `0x${string}`);
+  const w = createWalletClient({ account, chain: arcTestnet, transport: http() });
+  const pub4 = createPublicClient({ chain: arcTestnet, transport: http() });
+  const USDC = "0x3600000000000000000000000000000000000000";
+  const operator = getAddress(process.env.LEDGER_ADDRESS || ROBOTS.guard.wallet);
+  const hash = await w.deployContract({ abi: art.abi, bytecode: art.bytecode.object,
+    args: [USDC, getAddress(ROBOTS.guard.wallet), operator] });
+  const r = await pub4.waitForTransactionReceipt({ hash });
+  market = r.contractAddress!;
+  process.env.RACEMARKET_ADDRESS = market;
+  console.log(`✅ RaceMarket deployed: ${market}  (add to .env: RACEMARKET_ADDRESS=${market})`);
+}
+
 // 3. live Dutch auction on the robots
 const aid = `live-${cBal}`.slice(0, 16);
 console.log("🤠 starting Dutch auction on the robots...");

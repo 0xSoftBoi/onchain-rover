@@ -66,7 +66,16 @@ app.post("/estop/:robot", async (req, res) => {
   res.json({ stopped: true });
 });
 
-app.post("/race/open", (_req, res) => res.json(race.openRaceWithBets()));
+let onChainRaceId: number | null = null;
+app.post("/race/open", async (_req, res) => {
+  const r = race.openRaceWithBets();
+  onChainRaceId = null;
+  if (process.env.RACEMARKET_ADDRESS) {
+    try { onChainRaceId = (await settle.openRaceOnChain(2)).raceId; } catch (e: any) {
+      return res.status(500).json({ error: "openRace on-chain failed: " + e.message }); }
+  }
+  res.json({ ...r, onChainRaceId });
+});
 
 // World ID config for the frontend IDKit widget (public app_id only).
 app.get("/worldid/config", (_req, res) => res.json(worldid.config()));
@@ -86,7 +95,14 @@ app.post("/race/bet", async (req, res) => {
     const { bettor = "anon", racer, amount = 1, proof } = req.body;
     if (!proof) throw new Error("World ID proof required to bet");
     const v = await worldid.verify(proof, racer); // signal = racer (binds proof to choice)
-    res.json(race.placeBet({ bettor, racer, amount: Number(amount), nullifier: v.nullifier }));
+    // REAL on-chain bet (relayer-staked, nullifier on-chain) when market is live
+    let onchain;
+    if (process.env.RACEMARKET_ADDRESS && onChainRaceId !== null) {
+      const racerIdx = race.raceState()?.racers.indexOf(racer as RobotName) ?? 0;
+      onchain = await settle.betOnChain(onChainRaceId, racerIdx, String(amount), v.nullifier);
+    }
+    const odds = race.placeBet({ bettor, racer, amount: Number(amount), nullifier: v.nullifier });
+    res.json({ ...odds, onchain });
   } catch (e: any) { res.status(400).json({ error: e.message }); }
 });
 app.get("/race/odds", (_req, res) => res.json(race.odds()));
@@ -119,8 +135,20 @@ app.get("/reputation", async (_req, res) => {
 app.get("/race/state", (_req, res) => res.json(race.raceState()));
 app.post("/race/arm", (_req, res) => res.json(race.armRace()));
 app.post("/race/start", (_req, res) => res.json(race.startRace()));
-app.post("/race/finish", (req, res) =>
-  res.json(race.recordFinish(req.body.winner as RobotName)));
+app.post("/race/finish", async (req, res) => {
+  try {
+    const winner = req.body.winner as RobotName;
+    const r = race.recordFinish(winner);
+    let settled;
+    if (process.env.RACEMARKET_ADDRESS && onChainRaceId !== null) {
+      const winnerIdx = r.racers.indexOf(winner);
+      // proof: the guard's finish photo sha256 + Walrus blobId (req may carry them)
+      settled = await settle.settleRaceOnChain(
+        onChainRaceId, winnerIdx, req.body.sha256 ?? "", req.body.blobId ?? "");
+    }
+    res.json({ ...r, settled });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
 // On finish: watcher reports winner -> verify-photo + store-proof ->
 // RaceMarket.settle(raceId, winnerIdx, proofHash, blobId) via judge wallet.
 // Wire after contract deploy (TODO tonight).

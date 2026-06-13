@@ -137,6 +137,78 @@ export async function giveFeedback(opts: {
   return { tx: hash, status: receipt.status, explorer: `${ARC.explorer}/tx/${hash}` };
 }
 
+// --- RaceMarket: real parimutuel betting + settlement on Arc ----------------
+const raceAbi = parseAbi([
+  "function openRace(uint8 numRacers) returns (uint256)",
+  "function bet(uint256 raceId, uint8 racer, uint256 amount, uint256 worldNullifier)",
+  "function settle(uint256 raceId, uint8 winner, bytes32 proofHash, string walrusBlobId)",
+  "function nextRaceId() view returns (uint256)",
+]);
+const usdcApproveAbi = parseAbi([
+  "function approve(address spender, uint256 amount) returns (bool)",
+  "function allowance(address owner, address spender) view returns (uint256)",
+]);
+
+function guardWallet() {
+  return createWalletClient({
+    account: privateKeyToAccount(process.env.GUARD_PRIVATE_KEY as `0x${string}`),
+    chain: arcTestnet, transport: http(),
+  });
+}
+
+/** Guard (judge) opens a race on-chain. Returns the raceId. */
+export async function openRaceOnChain(numRacers = 2) {
+  const market = process.env.RACEMARKET_ADDRESS;
+  if (!market) throw new Error("RACEMARKET_ADDRESS not set (deploy RaceMarket)");
+  const id = await pub.readContract({
+    address: market as `0x${string}`, abi: raceAbi, functionName: "nextRaceId" });
+  const hash = await guardWallet().writeContract({
+    address: market as `0x${string}`, abi: raceAbi, functionName: "openRace", args: [numRacers] });
+  await pub.waitForTransactionReceipt({ hash });
+  return { raceId: Number(id), tx: hash };
+}
+
+/** Place a REAL on-chain parimutuel bet, staked by the treasury relayer on
+ * behalf of a World-ID-verified human (nullifier stored on-chain = sybil guard). */
+export async function betOnChain(raceId: number, racerIdx: number, amountUsdc: string, nullifier: string) {
+  const market = process.env.RACEMARKET_ADDRESS;
+  if (!market) throw new Error("RACEMARKET_ADDRESS not set");
+  const value = parseUnits(amountUsdc, 6);
+  const relayer = createWalletClient({
+    account: privateKeyToAccount(process.env.TREASURY_PRIVATE_KEY as `0x${string}`),
+    chain: arcTestnet, transport: http() });
+  // approve USDC to the market if needed
+  const owner = relayer.account.address;
+  const allowance = await pub.readContract({
+    address: ARC.usdc as `0x${string}`, abi: usdcApproveAbi, functionName: "allowance",
+    args: [owner, market as `0x${string}`] });
+  if (allowance < value) {
+    const ah = await relayer.writeContract({
+      address: ARC.usdc as `0x${string}`, abi: usdcApproveAbi, functionName: "approve",
+      args: [market as `0x${string}`, parseUnits("1000000", 6)] });
+    await pub.waitForTransactionReceipt({ hash: ah });
+  }
+  // nullifier -> uint256 (World nullifier_hash is a 0x… field element)
+  const nullU = BigInt(nullifier);
+  const hash = await relayer.writeContract({
+    address: market as `0x${string}`, abi: raceAbi, functionName: "bet",
+    args: [BigInt(raceId), racerIdx, value, nullU] });
+  const receipt = await pub.waitForTransactionReceipt({ hash });
+  return { tx: hash, status: receipt.status, explorer: `${ARC.explorer}/tx/${hash}` };
+}
+
+/** Guard settles the race on-chain with the Gemini-verified finish proof. */
+export async function settleRaceOnChain(raceId: number, winnerIdx: number, sha256: string, blobId: string) {
+  const market = process.env.RACEMARKET_ADDRESS;
+  if (!market) throw new Error("RACEMARKET_ADDRESS not set");
+  const hash = await guardWallet().writeContract({
+    address: market as `0x${string}`, abi: raceAbi, functionName: "settle",
+    args: [BigInt(raceId), winnerIdx,
+           (`0x${(sha256||"0".repeat(64)).replace(/^0x/,"")}`) as `0x${string}`, blobId || ""] });
+  const receipt = await pub.waitForTransactionReceipt({ hash });
+  return { tx: hash, status: receipt.status, explorer: `${ARC.explorer}/tx/${hash}` };
+}
+
 // --- Treasury: Ledger-clear-signed withdrawal (governance climax) ----------
 const treasuryAbi = parseAbi([
   "function withdraw(address to, uint256 amount)",
