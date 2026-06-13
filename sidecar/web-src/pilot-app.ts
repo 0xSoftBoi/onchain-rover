@@ -99,6 +99,11 @@ const els = {
   latency: byId("latency"),
   deadman: byId("deadman"),
   cap: byId("cap"),
+  source: byId("source"),
+  cameraState: byId("cameraState"),
+  lidar: byId("lidar"),
+  yaw: byId("yaw"),
+  odo: byId("odo"),
   left: byId("left"),
   right: byId("right"),
   estop: byId("estop") as HTMLButtonElement,
@@ -174,7 +179,7 @@ async function authorize(): Promise<AuthResponse> {
   const res = await fetch("/pilot/dev-authorize", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ robot: robotName }),
+    body: JSON.stringify({ robot: robotName, speed_mode: speedMode }),
   });
   const body = await res.json();
   if (!res.ok || body.error) throw new Error(body.error || `authorize failed ${res.status}`);
@@ -475,8 +480,13 @@ function renderTelemetry(frame: TelemetryFrame) {
   const right = frame.right_cmd ?? 0;
   els.left.textContent = left.toFixed(2);
   els.right.textContent = right.toFixed(2);
-  els.battery.textContent = frame.battery_v ? `${frame.battery_v.toFixed(2)}V` : "--";
-  els.cap.textContent = frame.max_speed ? frame.max_speed.toFixed(2) : "--";
+  els.source.textContent = frame.source || "bridge";
+  els.battery.textContent = frame.battery_v !== undefined ? `${frame.battery_v.toFixed(2)}V` : "--";
+  els.cap.textContent = frame.max_speed !== undefined ? frame.max_speed.toFixed(2) : "--";
+  els.cameraState.textContent = cameraLabel(frame);
+  els.lidar.textContent = lidarLabel(frame);
+  els.yaw.textContent = frame.yaw !== undefined ? `${frame.yaw.toFixed(0)}deg` : "--";
+  els.odo.textContent = odometryLabel(frame);
   speedMode = frame.speed_mode || speedMode;
   renderSpeedMode(speedMode);
 
@@ -488,11 +498,12 @@ function renderTelemetry(frame: TelemetryFrame) {
         ? "ready"
         : "stale";
   els.deadman.textContent = deadmanText;
-  els.deadman.className = `chip ${frame.estop || frame.stopped_by_deadman ? "bad" : frame.deadman_ok ? "ok" : "warn"}`;
+  els.deadman.className = frame.estop || frame.stopped_by_deadman ? "bad" : frame.deadman_ok ? "ok" : "warn";
 
   const lag = frame.ts_ms ? Math.max(0, Date.now() - frame.ts_ms) : null;
   els.latency.textContent = lag === null ? "--" : `${lag}ms`;
-  els.latency.className = `chip ${lag !== null && lag > 500 ? "warn" : ""}`;
+  els.latency.className = lag !== null && lag > 500 ? "warn" : "";
+  els.lidar.className = frame.lidar?.blocked ? "bad" : "";
 
   if (frame.estop) {
     els.direction.textContent = "Emergency stop";
@@ -501,6 +512,27 @@ function renderTelemetry(frame: TelemetryFrame) {
   } else if (!started) {
     els.direction.textContent = "Tap start to drive";
   }
+}
+
+function cameraLabel(frame: TelemetryFrame): string {
+  if (forceLocalCamera) return frame.camera?.status ? `local/${frame.camera.status}` : "local";
+  return frame.camera?.status || "--";
+}
+
+function lidarLabel(frame: TelemetryFrame): string {
+  const lidar = frame.lidar;
+  if (!lidar) return "--";
+  const distance = lidar.front_m ?? lidar.min_m;
+  if (distance === undefined) return lidar.blocked ? "blocked" : "--";
+  return `${lidar.blocked ? "!" : ""}${distance.toFixed(2)}m`;
+}
+
+function odometryLabel(frame: TelemetryFrame): string {
+  const left = frame.odometry_left;
+  const right = frame.odometry_right;
+  if (left === undefined && right === undefined) return "--";
+  if (left !== undefined && right !== undefined) return `${((left + right) / 2).toFixed(1)}m`;
+  return `${(left ?? right ?? 0).toFixed(1)}m`;
 }
 
 function setupJoystick() {
@@ -579,6 +611,7 @@ setInterval(() => {
   if (lastTelemetryAt && Date.now() - lastTelemetryAt > 1200) {
     els.latency.textContent = "stale";
     els.latency.className = "warn";
+    els.source.textContent = "stale";
   }
 }, 500);
 

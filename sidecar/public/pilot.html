@@ -44,13 +44,29 @@
     position:absolute; left:12px; right:12px; top:10px; display:flex;
     align-items:flex-start; justify-content:space-between; gap:10px;
   }
-  .chip-group { display:flex; flex-wrap:wrap; gap:6px; justify-content:flex-end; max-width:58vw; }
   .chip {
     display:inline-flex; align-items:center; gap:6px; min-height:28px; padding:5px 8px;
     border:1px solid var(--line); border-radius:8px; background:var(--glass);
     backdrop-filter:blur(10px); color:var(--txt); text-shadow:0 1px 2px #000;
     font-size:12px; white-space:nowrap;
   }
+  .data-panel {
+    width:min(222px, 58vw); border:1px solid var(--line); border-radius:8px;
+    background:var(--glass); backdrop-filter:blur(10px); padding:8px 9px;
+    text-shadow:0 1px 2px #000;
+  }
+  .data-head {
+    display:flex; justify-content:space-between; gap:8px; margin-bottom:6px;
+    color:var(--txt); font-size:12px;
+  }
+  .data-head span, .data-grid b { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .data-head span:last-child { color:var(--muted); text-align:right; }
+  .data-grid {
+    display:grid; grid-template-columns:34px minmax(0,1fr) 36px minmax(0,1fr);
+    column-gap:6px; row-gap:4px; align-items:center; font-size:11px;
+  }
+  .data-grid span { color:var(--muted); }
+  .data-grid b { color:var(--txt); font-weight:600; text-align:right; }
   .chip.dim { color:var(--muted); }
   .dot { width:8px; height:8px; border-radius:50%; background:var(--warn); box-shadow:0 0 10px currentColor; }
   .conn.up .dot { background:var(--ok); }
@@ -107,11 +123,18 @@
   }
   .start-button:disabled { opacity:.55; }
   @media (max-width:560px) {
-    .chip-group { max-width:64vw; }
     .chip { font-size:11px; min-height:26px; padding:4px 7px; }
+    .data-panel { width:min(206px, 62vw); padding:7px 8px; }
+    .data-grid { grid-template-columns:31px minmax(0,1fr) 32px minmax(0,1fr); font-size:10px; }
     .direction { max-width:48vw; bottom:20px; font-size:13px; }
     .throttle button { width:43px; height:34px; }
     .estop { width:78px; height:78px; }
+  }
+  @media (max-width:360px) {
+    .chip-row { left:9px; right:9px; gap:7px; }
+    .data-panel { width:178px; }
+    .data-head { font-size:11px; }
+    .data-grid { grid-template-columns:28px minmax(0,1fr) 29px minmax(0,1fr); column-gap:4px; }
   }
 </style>
 </head>
@@ -125,12 +148,18 @@
   <div class="hud">
     <div class="chip-row">
       <div class="chip conn" id="conn"><i class="dot"></i><span>idle</span></div>
-      <div class="chip-group">
-        <div class="chip dim" id="robotName">courier</div>
-        <div class="chip" id="battery">--</div>
-        <div class="chip" id="latency">--</div>
-        <div class="chip" id="deadman">--</div>
-        <div class="chip" id="cap">--</div>
+      <div class="data-panel" id="dataPanel">
+        <div class="data-head"><span id="robotName">/ courier</span><span id="source">idle</span></div>
+        <div class="data-grid">
+          <span>bat</span><b id="battery">--</b>
+          <span>lag</span><b id="latency">--</b>
+          <span>dm</span><b id="deadman">--</b>
+          <span>cap</span><b id="cap">--</b>
+          <span>cam</span><b id="cameraState">--</b>
+          <span>lid</span><b id="lidar">--</b>
+          <span>yaw</span><b id="yaw">--</b>
+          <span>odo</span><b id="odo">--</b>
+        </div>
       </div>
     </div>
 
