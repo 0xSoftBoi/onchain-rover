@@ -44,6 +44,14 @@ SIDECAR_URL=ws://127.0.0.1:4021 npm run sim:robot -- guard
 SIDECAR_URL=ws://127.0.0.1:4021 npm run sim:robot -- courier
 ```
 
+To auto-finish a race from simulated telemetry:
+
+```bash
+cd sidecar
+SIDECAR_URL=http://127.0.0.1:4021 FINISH_ROBOTS=guard,courier \
+  FINISH_ODOMETRY=6 npm run sim:finish -- <roundId>
+```
+
 The deploy step writes `sidecar/src/generated/contracts.local.json`. Re-run it
 whenever the local chain is reset.
 
@@ -168,6 +176,19 @@ instead of `robot`.
 Detection events are included in the result proof before the SHA-256
 `proofHash` is generated. This means settlement can reference a proof that was
 created from detector input rather than an operator winner click.
+
+For local simulation, `npm run sim:finish -- <roundId>` connects to
+`/ws/telemetry` for one or both robots and posts a finish detection when a
+threshold is crossed.
+
+Environment knobs:
+
+- `SIDECAR_URL`: sidecar HTTP or WS base URL, defaults to `http://127.0.0.1:4021`
+- `FINISH_ROBOTS`: comma-separated `guard,courier`, defaults to both
+- `FINISH_MODE`: `odometry` or `lidar`, defaults to `odometry`
+- `FINISH_ODOMETRY`: odometry threshold for simulated line crossing, defaults to `6`
+- `FINISH_LIDAR_FRONT_M`: lidar front-distance threshold, defaults to `0.3`
+- `DETECTOR_ONCE=0`: keep watching after the first detection
 
 ## Environment
 

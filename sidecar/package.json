@@ -9,6 +9,7 @@
     "dev": "tsx watch src/index.ts",
     "start": "tsx src/index.ts",
     "sim:robot": "tsx src/sim-robot.ts",
+    "sim:finish": "tsx src/sim-finish-detector.ts",
     "build:ledger": "esbuild web-src/ledger.ts --bundle --format=esm --outfile=public/ledger.bundle.js --platform=browser --define:global=globalThis",
     "build:pilot": "esbuild web-src/pilot-app.ts --bundle --format=esm --outfile=public/pilot-app.bundle.js --platform=browser --define:global=globalThis"
   },
