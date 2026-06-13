@@ -24,9 +24,25 @@ Health:
 curl -s http://127.0.0.1:8000/health
 ```
 
+Telemetry WebSocket smoke:
+
+```bash
+python3 scripts/ws_telemetry_smoke.py --url ws://127.0.0.1:8000/ws/telemetry
+```
+
 ## Jetson serial mode
 
 Stop the stock Waveshare app first so only this service owns `/dev/ttyTHS1`.
+For boot-persistent install/update, use the deployment helper:
+
+```bash
+ROBOT_ROLE=courier SIDECAR_URL=http://192.168.8.10:4021 \
+  ./deploy/jetson-install.sh --profile wifi --start
+```
+
+The full Jetson service runbook is in `deploy/README.md`.
+
+For foreground debugging:
 
 ```bash
 pgrep -f '[a]pp.py' | xargs -r kill
@@ -38,7 +54,7 @@ ROBOT_ROLE=courier ROVER_MODE=serial ROVER_SERIAL_PORT=/dev/ttyTHS1 \
 
 The USB lidar is read directly by the Rust harness. The current hardware uses
 an LD06/LD19-compatible binary stream on `/dev/ttyACM0` at `230400` baud. Set
-`ROVER_LIDAR_ENABLED=0` to run without it, or adjust
+`ROVER_LIDAR_ENABLED=false` to run without it, or adjust
 `ROVER_LIDAR_BLOCK_THRESHOLD_M` when the finish/obstacle threshold needs to
 move from the default `0.30m`.
 

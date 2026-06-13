@@ -1,0 +1,20 @@
+[Unit]
+Description=Onchain Rover Rust robot harness
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=@ROVER_ENV_FILE@
+WorkingDirectory=@ROVER_HARNESS_DIR@
+ExecStartPre=/bin/sh -lc "pgrep -f '[a]pp.py|[u]vicorn.*api:app|[r]ead_serial|[c]apture|[v]oice' | xargs -r kill"
+ExecStart=@ROVER_BIN@
+Restart=on-failure
+RestartSec=2
+KillSignal=SIGINT
+TimeoutStopSec=8
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

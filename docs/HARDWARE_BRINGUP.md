@@ -169,6 +169,35 @@ Fix: stop that process before continuing.
 
 ## 4. Start Rust Rover Service
 
+Preferred install/update path from the repo root on each Jetson:
+
+```bash
+ROBOT_ROLE=guard SIDECAR_URL=http://192.168.8.10:4021 \
+  ./robot-harness/deploy/jetson-install.sh --profile wifi --start
+```
+
+```bash
+ROBOT_ROLE=courier SIDECAR_URL=http://192.168.8.10:4021 \
+  ./robot-harness/deploy/jetson-install.sh --profile wifi --start
+```
+
+Expected pass:
+
+```text
+Active: active (running)
+```
+
+Check logs:
+
+```bash
+systemctl --user status robot-harness --no-pager
+journalctl --user -u robot-harness -n 80 --no-pager
+```
+
+Use `robot-harness/deploy/README.md` for USB-net profiles, env rewrites, and
+reboot-persistent service setup. For foreground debugging, run the binary
+directly:
+
 On GUARD:
 
 ```bash
@@ -198,7 +227,7 @@ cargo run --release -- --listen 0.0.0.0:8000
 If lidar is absent:
 
 ```bash
-ROVER_LIDAR_ENABLED=0
+ROVER_LIDAR_ENABLED=false
 ```
 
 If camera is proxied by another local capture service:
@@ -505,7 +534,7 @@ and that estop is reset.
 | Robot service unreachable | `curl http://<robot-ip>:8000/health` | Check robot IP, harness process, `--listen 0.0.0.0:8000`, and router lease. |
 | Serial busy | `fuser -v /dev/ttyTHS1` | Stop stock Waveshare app or old Python serial reader. |
 | Camera missing | `curl /camera/status` and `fuser -v /dev/video0` | Stop camera owner, set proxy URLs, or mark camera unavailable before racing. |
-| Lidar absent | `curl /sensors` | Check `/dev/ttyACM0`, baud `230400`, or set `ROVER_LIDAR_ENABLED=0`. |
+| Lidar absent | `curl /sensors` | Check `/dev/ttyACM0`, baud `230400`, or set `ROVER_LIDAR_ENABLED=false`. |
 | Pilot says round not locked | `round.html` Round State | Join both drivers, lock escrow, authorize robots, then countdown. |
 | Robot moves after release | `/robot-link/state` deadman fields | Hit STOP, then inspect sidecar bridge logs and Rust deadman settings. |
 | Estop blocks drive | `curl /health` on robot | Only reset with `/estop/reset` after physical inspection. |

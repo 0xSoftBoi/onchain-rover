@@ -111,6 +111,10 @@ locked 90-second demo by calling both APIs.
 - Robot A already has `~/ugv_jetson/start_ugv_web.sh` + `@reboot` cron (setsid).
   Replace its target with `robot-harness` for the event (stock web UI, Python
   API, and Rust stack cannot all own serial/camera at once).
+- Preferred Rust deployment is the user systemd helper in
+  `robot-harness/deploy/jetson-install.sh`; it builds the release binary,
+  writes `~/.config/onchain-rover/robot-harness.env`, installs
+  `robot-harness.service`, and restarts the service.
 - Hard-stop: `{"T":0}` + `drive(0,0)`; geofence via wheel odometry (odl/odr) in
   the Rust telemetry contract; speed caps and deadman are enforced by
   `robot-harness`.
