@@ -9,6 +9,7 @@
  * 🚨 Buyer wallets must be plain EOAs (Privy server wallets are).
  */
 import express from "express";
+import { randomUUID } from "node:crypto";
 import { createGatewayMiddleware } from "@circle-fin/x402-batching/server";
 
 import "./env.js"; // MUST be first — loads dotenv before any env-reading module
@@ -149,9 +150,8 @@ app.post("/race/finish", async (req, res) => {
     res.json({ ...r, settled });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
-// On finish: watcher reports winner -> verify-photo + store-proof ->
-// RaceMarket.settle(raceId, winnerIdx, proofHash, blobId) via judge wallet.
-// Wire after contract deploy (TODO tonight).
+// /race/finish settles on-chain via RaceMarket.settle (judge=guard) with the
+// finish proof — wired above in settle.settleRaceOnChain.
 
 // Checkpoint: a robot signs a real challenge with its OWN EOA key.
 app.post("/challenge", async (req, res) => {
@@ -304,11 +304,15 @@ app.get("/race/auction/state", (req, res) => {
   res.json(auctions.get(String(req.query.auctionId)) ?? { note: "unknown" });
 });
 
-// Dev pilot authorize (no payment) — for testing the control loop. The real
-// paid path is /pilot/:robot/start (x402). Returns the robot's WS drive URL.
+// Free pilot session (gated by ALLOW_FREE_PILOT). The PAID path is
+// /pilot/:robot/start (x402, $1). Both issue the same real cryptographic
+// session token authorizing the robot's WS drive — the only difference is
+// payment. Off by default so production requires payment.
 app.post("/pilot/dev-authorize", async (req, res) => {
+  if (process.env.ALLOW_FREE_PILOT !== "1")
+    return res.status(403).json({ error: "free pilot disabled — use the paid /pilot/:robot/start (x402)" });
   const name = (req.body.robot ?? "courier") as RobotName;
-  const token = "dev-" + Math.random().toString(36).slice(2, 10);
+  const token = randomUUID();
   try {
     await fetch(`${robot(name).url}/pilot/authorize`, {
       method: "POST", headers: { "Content-Type": "application/json" },
