@@ -126,7 +126,8 @@ locked 90-second demo by calling both APIs.
 
 1. USB-net in → `ssh jetson@192.168.55.1` (pw `jetson`), install SSH key.
 2. Join travel-router WiFi; note IP; disable `audio_output` in
-   `~/ugv_jetson/config.yaml` (as on A); kill voice/capture/read_serial hogs.
+   `~/ugv_jetson/config.yaml` (as on A); kill legacy Python
+   voice/capture_images/read_serial owners.
 3. `scp robot/*.py` over; venv = `~/ugv_jetson/ugv-env/bin/python`;
    `pip install pyserial requests fastapi uvicorn google-genai ggwave`.
 4. Confirm: telemetry frame, 0.5 s drive, photo capture, `piper` speaks.

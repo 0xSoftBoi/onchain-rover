@@ -181,6 +181,14 @@ escape_sed_replacement() {
   printf '%s' "$1" | sed 's/[&|]/\\&/g'
 }
 
+stop_existing_harness() {
+  if command -v systemctl >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1; then
+    systemctl --user stop robot-harness.service >/dev/null 2>&1 || true
+  fi
+  pgrep -f '[r]over-harness($| )' | xargs -r kill
+  sleep 0.2
+}
+
 if [[ "$install_systemd" -eq 1 ]]; then
   mkdir -p "$(dirname "$unit_file")"
   sed \
@@ -194,6 +202,7 @@ if [[ "$install_systemd" -eq 1 ]]; then
     systemctl --user daemon-reload
     systemctl --user enable robot-harness.service >/dev/null
     if [[ "$start_service" -eq 1 ]]; then
+      stop_existing_harness
       systemctl --user restart robot-harness.service
     fi
     systemctl --user --no-pager --full status robot-harness.service || true

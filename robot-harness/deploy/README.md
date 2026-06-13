@@ -32,7 +32,8 @@ The script builds `target/release/rover-harness`, installs it to
 `~/.local/bin/rover-harness`, writes
 `~/.config/onchain-rover/robot-harness.env`, installs
 `~/.config/systemd/user/robot-harness.service`, enables the service, and
-restarts it.
+restarts it. During `--start`, it stops any existing user `robot-harness`
+service and any ad hoc `rover-harness` process already owning port `8000`.
 
 For boot without an interactive login, enable user-service lingering once:
 
@@ -128,11 +129,13 @@ curl -s http://192.168.8.71:8000/health | python3 -m json.tool
 Stop old Python or Waveshare owners without rebooting:
 
 ```bash
-pgrep -af 'app.py|uvicorn|read_serial|capture|voice'
-pgrep -f '[a]pp.py' | xargs -r kill
-pgrep -f '[u]vicorn.*api:app' | xargs -r kill
-pgrep -f '[r]ead_serial|[c]apture|[v]oice' | xargs -r kill
+LEGACY_ROBOT_PATTERN='[p]ython.*(app.py|read_serial|capture|voice)|[u]vicorn.*api:app|[c]apture_images'
+pgrep -af "$LEGACY_ROBOT_PATTERN"
+pgrep -f "$LEGACY_ROBOT_PATTERN" | xargs -r kill
 ```
+
+Keep this pattern scoped. Some Jetson images have system processes named
+`capture` or `capture-control`; those are not old robot API owners.
 
 Restart the Rust service:
 

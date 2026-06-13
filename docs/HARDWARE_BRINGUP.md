@@ -116,16 +116,15 @@ The stock Waveshare app and older Python services can own `/dev/ttyTHS1`,
 On each Jetson:
 
 ```bash
-pgrep -af 'app.py|uvicorn|read_serial|capture|voice'
-pgrep -f '[a]pp.py' | xargs -r kill
-pgrep -f '[u]vicorn.*api:app' | xargs -r kill
-pgrep -f '[r]ead_serial|[c]apture|[v]oice' | xargs -r kill
+LEGACY_ROBOT_PATTERN='[p]ython.*(app.py|read_serial|capture|voice)|[u]vicorn.*api:app|[c]apture_images'
+pgrep -af "$LEGACY_ROBOT_PATTERN"
+pgrep -f "$LEGACY_ROBOT_PATTERN" | xargs -r kill
 ```
 
 Expected pass after stopping:
 
 ```bash
-pgrep -af 'app.py|uvicorn|read_serial|capture|voice'
+pgrep -af "$LEGACY_ROBOT_PATTERN"
 ```
 
 prints nothing, or only the current `pgrep` command.
@@ -138,6 +137,8 @@ Expected fail:
 
 Fix: kill the listed process. Avoid `pkill -f app.py` over SSH because it can
 match your own shell command and drop the session.
+Do not use a broad `capture` kill pattern: some Jetson images have system
+processes named `capture` or `capture-control`.
 
 ## 3. Confirm Device Ownership
 
