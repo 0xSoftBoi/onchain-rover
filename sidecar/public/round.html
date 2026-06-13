@@ -237,6 +237,8 @@
         <div class="kv"><span class="k">txs</span><span class="v" id="txs">-</span></div>
         <div class="kv"><span class="k">cancel policy</span><span class="v" id="cancelPolicy">-</span></div>
         <div class="kv"><span class="k">latest detection</span><span class="v" id="finishDetection">-</span></div>
+        <div class="kv"><span class="k">telemetry trace</span><span class="v" id="telemetryTrace">-</span></div>
+        <div class="kv"><span class="k">settlement</span><span class="v" id="settlementState">-</span></div>
         <div class="kv"><span class="k">proof hash</span><span class="v" id="proofHash">-</span></div>
         <div class="kv"><span class="k">evidence hash</span><span class="v" id="evidenceHash">-</span></div>
         <div class="actions" style="margin-top:8px">
@@ -401,6 +403,17 @@ function cancellationSummary(round) {
   return `${cancellation.code} · ${drivers}`;
 }
 
+function settlementSummary(round) {
+  const settlement = round?.settlementState;
+  if (!settlement) return round?.winner ? "ready" : "blocked";
+  return `${settlement.status} · ${settlement.reason || "-"}`;
+}
+
+function telemetryTraceSummary(round) {
+  const trace = round?.telemetryTraceId || round?.proof?.telemetryTraceId;
+  return trace || "-";
+}
+
 function render() {
   const round = state.round;
   const calibration = round?.stageCalibration;
@@ -415,6 +428,8 @@ function render() {
   $("txs").textContent = txSummary(round);
   $("cancelPolicy").textContent = cancellationSummary(round);
   $("finishDetection").textContent = detectionSummary();
+  $("telemetryTrace").textContent = telemetryTraceSummary(round);
+  $("settlementState").textContent = settlementSummary(round);
   const proofHash = state.evidence?.proofHash || round?.proofHash || "-";
   const evidenceHash = state.evidence?.evidenceHash || round?.evidenceHash || "-";
   $("proofHash").textContent = proofHash;
@@ -697,6 +712,8 @@ function renderReplay() {
     ["round", evidence.roundId],
     ["proof", evidence.proofHash || "-"],
     ["packet", evidence.evidenceHash || "-"],
+    ["trace", evidence.resultProof?.result?.telemetryTraceId || "-"],
+    ["settlement", evidence.resultProof?.result?.settlementState?.status || "-"],
     ["detections", String(evidence.finishDetections?.length || 0)],
     ["lifecycle", (evidence.lifecycle || []).map((event) => `${event.event}@${new Date(event.atMs).toLocaleTimeString()}`).join(" -> ") || "-"],
   ];
@@ -712,6 +729,30 @@ function renderReplay() {
     row.children[1].textContent = value;
     root.append(row);
   }
+}
+
+function operatorFinishProof(winner) {
+  const latest = state.detections?.at?.(-1);
+  const now = Date.now();
+  const actionId = globalThis.crypto?.randomUUID
+    ? globalThis.crypto.randomUUID()
+    : `${state.round.id}-${winner}-${now}`;
+  return {
+    source: "operator",
+    method: "winner-confirmation-button",
+    winner,
+    operatorActionId: actionId,
+    submittedAtMs: now,
+    telemetryTraceId: `trace-${state.round.id}-${now}`,
+    finishDetectionId: latest?.id,
+    frameHash: latest?.frameHash,
+    frameSource: latest?.source,
+    frameCapturedAtMs: latest?.detectedAtMs,
+    metrics: {
+      surface: "round.html",
+      detectionsSeen: state.detections?.length || 0,
+    },
+  };
 }
 
 async function loadRound(roundId) {
@@ -746,8 +787,8 @@ $("lockLocal").onclick = () => step("authorized robots", () => postJson(`/race/r
 $("lockLocalSim").onclick = () => step("local sim locked", () => postJson(`/race/round/${state.round.id}/lock`, { skipRobotAuth: true }));
 $("countdown").onclick = () => step("countdown started", () => postJson(`/race/round/${state.round.id}/countdown`));
 $("startRace").onclick = () => step("local race started", () => postJson(`/race/round/${state.round.id}/start`));
-$("finishChallenger").onclick = () => step("challenger finished", () => postJson(`/race/round/${state.round.id}/finish`, { winner: "challenger", proof: { source: "operator" } }));
-$("finishOpponent").onclick = () => step("opponent finished", () => postJson(`/race/round/${state.round.id}/finish`, { winner: "opponent", proof: { source: "operator" } }));
+$("finishChallenger").onclick = () => step("challenger finished", () => postJson(`/race/round/${state.round.id}/finish`, { winner: "challenger", proof: operatorFinishProof("challenger") }));
+$("finishOpponent").onclick = () => step("opponent finished", () => postJson(`/race/round/${state.round.id}/finish`, { winner: "opponent", proof: operatorFinishProof("opponent") }));
 $("detectChallenger").onclick = () => step("challenger finish detected", async () => {
   const result = await postJson(`/race/round/${state.round.id}/finish-detection`, {
     slot: "challenger",

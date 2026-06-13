@@ -974,6 +974,7 @@ function formatUsdcUnits(units: bigint): string {
 
 function ensureResultEvidence(round: rounds.Round): rounds.Round {
   if (round.proofHash) return round;
+  if (!round.winner) throw new Error("round winner required");
   const finalized = evidence.finalizeResultProof(round, round.proof);
   return rounds.markEvidenceHashes(round.id, finalized.proofHash, finalized.evidenceHash);
 }

@@ -189,6 +189,8 @@ function buildResultProof(record: EvidenceRecord, round: Round) {
       finishMs: round.finishMs ?? null,
       startedAt: round.startedAt ?? null,
       finishedAt: round.finishedAt ?? null,
+      telemetryTraceId: round.telemetryTraceId ?? null,
+      settlementState: round.settlementState ?? null,
     },
     lifecycle: record.events
       .filter((event) => event.event !== "settled")
@@ -271,6 +273,8 @@ function sanitizeRound(round: Round) {
     cancellation: round.cancellation ?? null,
     finishMs: round.finishMs ?? null,
     winner: round.winner ?? null,
+    telemetryTraceId: round.telemetryTraceId ?? null,
+    settlementState: round.settlementState ?? null,
     proofHash: round.proofHash ?? null,
     evidenceHash: round.evidenceHash ?? null,
     stageCalibration: sortedClone(round.stageCalibration),

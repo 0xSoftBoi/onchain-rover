@@ -50,16 +50,34 @@ async function main() {
   assert(challengerPilot.driveWs && challengerPilot.token, "challenger pilot session missing");
   assert(opponentPilot.driveWs && opponentPilot.token, "opponent pilot session missing");
 
+  round = await postJson(`/race/round/${round.id}/chain/start`);
+  assert(round.chainStatus === "started", `expected started chain status, got ${round.chainStatus}`);
+  await assertPostRejected(`/race/round/${round.id}/chain/settle`, "winner required");
+
   round = await postJson(`/race/round/${round.id}/finish`, {
     winner: "challenger",
-    proof: { source: "e2e-dev-join" },
+    proof: {
+      source: "e2e-dev-join",
+      method: "operator-confirmation-button",
+      telemetryTraceId: `trace-${round.id}-e2e`,
+      frameHash: "0xe2e",
+    },
   });
   assert(round.status === "finished", `expected finished round, got ${round.status}`);
+  assert(round.telemetryTraceId === `trace-${round.id}-e2e`, "finish telemetry trace id missing");
+  assert(round.proof?.operatorActionId, "operator finish action id missing");
+  assert(round.proof?.proofFrame?.status === "captured", "proof frame metadata missing");
+  assert(round.settlementState?.status === "ready", "settlement state should be ready after finish");
   await assertDriveRejectedAfterFinish(challengerPilot.driveWs);
 
   const evidence = await getJson(`/race/round/${round.id}/evidence`);
   const lifecycle = evidence.evidence?.lifecycle ?? [];
   assert(lifecycle.some((event: { event?: string }) => event.event === "started"), "started evidence missing");
+  assert(evidence.evidence?.resultProof?.result?.telemetryTraceId === round.telemetryTraceId, "evidence trace id missing");
+
+  round = await postJson(`/race/round/${round.id}/chain/settle`);
+  assert(round.status === "settled", `expected settled round, got ${round.status}`);
+  assert(round.settlementState?.status === "settled", "settlement state should be settled after payout");
 
   console.log("Local dev wallet rehearsal e2e passed");
   console.log(`  roundId:     ${round.id}`);
@@ -85,6 +103,18 @@ async function postJson(path: string, body: Record<string, unknown> = {}) {
   const json = await res.json().catch(() => ({}));
   if (!res.ok || json.error) throw new Error(json.error || `${path} failed ${res.status}`);
   return json;
+}
+
+async function assertPostRejected(path: string, expected: string) {
+  const res = await fetch(`${sidecarHttp}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: "{}",
+  });
+  const json = await res.json().catch(() => ({}));
+  if (res.ok || !String(json.error ?? "").includes(expected)) {
+    throw new Error(`${path} should reject with ${expected}, got ${res.status}: ${JSON.stringify(json)}`);
+  }
 }
 
 async function assertRaceJoinFeeRequiresPayment(roundId: string) {

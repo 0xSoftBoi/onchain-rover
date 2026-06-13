@@ -313,6 +313,12 @@ After settlement, the sidecar also updates the append-only evidence packet hash
 as `evidenceHash`. The on-chain race result uses `proofHash`; `evidenceHash`
 tracks the full local packet, including the later settled snapshot.
 
+Operator finish actions store `onchain-rover.operator-finish-proof.v1`
+metadata on the round. The proof includes the confirmed winner, operator action
+id, optional finish-frame hash, telemetry trace id, and a `settlementState`
+that moves from `blocked` to `ready` at winner confirmation and then to
+`settled` after payout submission.
+
 ## Operator Lobby
 
 Open the lobby from a laptop on the same network:

@@ -92,6 +92,13 @@ export type Cancellation = {
   }>;
 };
 
+export type SettlementState = {
+  status: "blocked" | "ready" | "settled" | "canceled";
+  reason: string;
+  updatedAt: number;
+  txHash?: string;
+};
+
 export type ChainRoundStatus =
   | "not-opened"
   | "opened"
@@ -149,6 +156,8 @@ export type Round = {
   winner?: DriverSlot;
   finishMs?: number;
   proof?: Record<string, unknown>;
+  telemetryTraceId?: string;
+  settlementState?: SettlementState;
   proofHash?: string;
   evidenceHash?: string;
   chainRaceId?: string;
@@ -228,6 +237,11 @@ export function createRound(input: CreateRoundInput): Round {
     challengeExpiresAt:
       now + clampInt(input.challengeTtlSecs, 5, 600, DEFAULT_CHALLENGE_TTL_SECS) * 1000,
     createdAt: now,
+    settlementState: {
+      status: "blocked",
+      reason: "winner confirmation required",
+      updatedAt: now,
+    },
     stageCalibration,
     drivers: {
       challenger: {
@@ -397,11 +411,19 @@ export function finishRound(id: string, winner: DriverSlot, proof?: Record<strin
   const round = getMutableRound(id);
   requireStatus(round, "racing");
   requireDriver(round, winner);
+  const finishedAt = Date.now();
+  const telemetryTraceId = finishTelemetryTraceId(round, proof, finishedAt);
   round.status = "finished";
   round.winner = winner;
-  round.finishedAt = Date.now();
+  round.finishedAt = finishedAt;
   round.finishMs = round.finishedAt - (round.startedAt ?? round.finishedAt);
-  round.proof = proof;
+  round.telemetryTraceId = telemetryTraceId;
+  round.proof = normalizeFinishProof(round, winner, proof, telemetryTraceId, finishedAt);
+  round.settlementState = {
+    status: "ready",
+    reason: "winner confirmed",
+    updatedAt: finishedAt,
+  };
   return persistSnapshot(round, "round.finished");
 }
 
@@ -499,6 +521,12 @@ export function markChainSettled(id: string, txHash: string): Round {
   round.chainStatus = "settled";
   round.status = "settled";
   round.settledAt = Date.now();
+  round.settlementState = {
+    status: "settled",
+    reason: "settlement submitted",
+    updatedAt: round.settledAt,
+    txHash,
+  };
   round.txHashes ??= {};
   round.txHashes.settle = txHash;
   return persistSnapshot(round, "round.chain_settled");
@@ -509,6 +537,12 @@ export function markChainCanceled(id: string, txHash: string, reason = "canceled
   round.chainStatus = "canceled";
   round.status = "canceled";
   applyCancellation(round, { code: "chain_cancel", reason });
+  round.settlementState = {
+    status: "canceled",
+    reason,
+    updatedAt: round.canceledAt ?? Date.now(),
+    txHash,
+  };
   round.txHashes ??= {};
   round.txHashes.cancel = txHash;
   return persistSnapshot(round, "round.chain_canceled");
@@ -522,6 +556,11 @@ export function cancelRound(id: string, input?: string | { reason?: string; code
   const cancelInput = normalizeCancelInput(round, input);
   round.status = "canceled";
   applyCancellation(round, cancelInput);
+  round.settlementState = {
+    status: "canceled",
+    reason: cancelInput.reason,
+    updatedAt: round.canceledAt ?? Date.now(),
+  };
   return persistSnapshot(round, "round.canceled");
 }
 
@@ -842,6 +881,48 @@ function finiteNumber(value: unknown, fallback: number, min: number, max: number
   const number = Number(value);
   if (!Number.isFinite(number)) return fallback;
   return Math.max(min, Math.min(max, Number(number.toFixed(3))));
+}
+
+function finishTelemetryTraceId(round: Round, proof: Record<string, unknown> | undefined, finishedAt: number): string {
+  return firstString(proof?.telemetryTraceId, proof?.traceId)
+    ?? `trace-${round.id}-${finishedAt}`;
+}
+
+function normalizeFinishProof(
+  round: Round,
+  winner: DriverSlot,
+  proof: Record<string, unknown> | undefined,
+  telemetryTraceId: string,
+  finishedAt: number,
+): Record<string, unknown> {
+  const input = plainObject(proof) ?? {};
+  const frameHash = firstString(input.frameHash, input.proofFrameHash);
+  const finishDetectionId = firstString(input.finishDetectionId, input.detectionId);
+  return {
+    schema: "onchain-rover.operator-finish-proof.v1",
+    source: firstString(input.source) ?? "operator",
+    method: firstString(input.method) ?? "winner-confirmation",
+    winner,
+    roundId: round.id,
+    submittedAtMs: timestampMs(input.submittedAtMs, finishedAt),
+    operatorActionId: firstString(input.operatorActionId) ?? `${round.id}-${winner}-${finishedAt}`,
+    telemetryTraceId,
+    finishDetectionId,
+    proofFrame: {
+      status: frameHash ? "captured" : "not-provided",
+      frameHash,
+      source: firstString(input.frameSource) ?? firstString(input.source) ?? "operator",
+      capturedAtMs: timestampMs(input.frameCapturedAtMs, finishedAt),
+    },
+    note: firstString(input.note),
+    metrics: plainObject(input.metrics),
+  };
+}
+
+function timestampMs(value: unknown, fallback: number): number {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number <= 0) return fallback;
+  return Math.floor(number);
 }
 
 function parseRobotName(value: unknown): RobotName | null {
