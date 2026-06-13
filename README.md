@@ -45,11 +45,23 @@ fake data (`grep` the repo: no `Math.random` nullifiers, no stubs):
 - **Proof** — finish/job photos stored on **Walrus** (real blobId, read-back
   verified), hash anchored on-chain.
 - **Governance** — `Treasury` withdrawable only by the Ledger-held owner,
-  clear-signed via an ERC-7730 descriptor.
+  clear-signed via an ERC-7730 descriptor. (Owner transferred to a real Ledger
+  device; gas-funded so the device-signed withdrawal broadcasts.)
+- **Decentralized verification (Chainlink CRE)** — a DON independently calls the
+  robot's `GET /attest`, reaches **median consensus** on the verification score,
+  and `writeReport`s the verdict to `AttestationConsumer` on Sepolia. The robot's
+  self-claim never settles — `isVerified(job)` gates the mint/payment/reputation.
+- **Custody (Privy)** — robot signing keys live in Privy's TEE, not on the host;
+  `settle.pay()` signs through the enclave (`CUSTODY=privy`). **LIVE**: real Arc
+  tx signed in the TEE (`0x6a9b8fdd…`).
+- **Network reputation (BigQuery)** — ranks every on-chain agent by ERC-8004
+  `NewFeedback` volume on the canonical mainnet registry (partition-pruned,
+  dry-run guarded); the rover's local Arc reputation shown alongside.
 
-Three things need credentials/funds to *execute* and fail loudly without them
-(no mock fallback): **Arc USDC** (Circle faucet/booth), **`WORLD_APP_ID`**
-(developer.world.org), **Sepolia ETH** for ENS registration.
+Things that need credentials/funds to *execute* and fail loudly without them
+(no mock fallback): **Arc USDC** (Circle), **`WORLD_APP_ID`** (live ✓),
+**Sepolia ETH** (ENS + CRE consumer), **`cre login`** (CRE simulate),
+**`PRIVY_APP_ID/SECRET`** (live ✓), **GCP creds** (BigQuery).
 
 ## Layout
 - `robot/` — Python on each Jetson. `api.py` (FastAPI :8000 + MJPEG `/stream` +
