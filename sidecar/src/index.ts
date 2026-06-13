@@ -18,6 +18,9 @@ import * as erc8004 from "./erc8004.js";
 import * as ens from "./ens.js";
 import * as identity from "./identity.js";
 import * as worldid from "./worldid.js";
+import * as cre from "./cre.js";
+import * as privy from "./privy.js";
+import * as bq from "./bigquery.js";
 import * as lb from "./leaderboard.js";
 import * as race from "./race.js";
 import * as settle from "./settle.js";
@@ -281,6 +284,17 @@ app.post("/race/open", async (_req, res) => {
 // World ID config for the frontend IDKit widget (public app_id only).
 app.get("/worldid/config", (_req, res) => res.json(worldid.config()));
 
+// --- Chainlink CRE decentralized verification (read on-chain result) -------
+app.get("/cre/config", (_req, res) => res.json(cre.config()));
+app.get("/cre/latest", async (_req, res) => res.json(await cre.latest()));
+app.get("/privy/status", (_req, res) => res.json(privy.config()));
+
+// --- BigQuery: network-wide ERC-8004 reputation leaderboard ----------------
+app.get("/leaderboard/network", async (_req, res) => {
+  try { res.json(await bq.leaderboard()); }
+  catch (e: any) { res.status(200).json({ configured: bq.configured(), error: e.message, rows: [] }); }
+});
+
 // Real World ID verify -> real nullifier. Frontend posts the IDKit proof here
 // and gets back the verified nullifier to use when betting.
 app.post("/worldid/verify", async (req, res) => {
@@ -317,12 +331,22 @@ app.get("/treasury/info", async (_req, res) => {
 app.get("/treasury/withdraw-tx", async (req, res) => {
   try {
     const { from, to, amount } = req.query as Record<string, string>;
+    console.log(`[treasury] withdraw-tx from=${from} to=${to} amount=${amount}`);
     res.json(await settle.buildWithdrawTx(from, to, amount));
-  } catch (e: any) { res.status(400).json({ error: e.message }); }
+  } catch (e: any) {
+    console.error("[treasury] withdraw-tx error:", e.message);
+    res.status(400).json({ error: e.message });
+  }
 });
 app.post("/treasury/broadcast", async (req, res) => {
-  try { res.json(await settle.broadcastSigned(req.body.tx, req.body.signature)); }
-  catch (e: any) { res.status(500).json({ error: e.message }); }
+  try {
+    const r = await settle.broadcastSigned(req.body.tx, req.body.signature);
+    console.log("[treasury] broadcast ok:", r?.tx);
+    res.json(r);
+  } catch (e: any) {
+    console.error("[treasury] broadcast error:", e.message);
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ERC-8004 reputation summary (the leaderboard score) for each robot.

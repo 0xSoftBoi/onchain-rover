@@ -209,6 +209,9 @@
     <span class="chip" id="b-gemma">gemma3 · on-device</span>
     <span class="chip" id="b-8004">ERC-8004</span>
     <span class="chip" id="b-ledger">Ledger</span>
+    <span class="chip" id="b-cre">Chainlink CRE</span>
+    <span class="chip" id="b-privy">Privy custody</span>
+    <span class="chip" id="b-bq">BigQuery</span>
   </div>
 
   <!-- MAIN -->
@@ -286,10 +289,15 @@
             <div class="val" id="rep-val" style="color:var(--teal)">—</div><div class="cap">REPUTATION · 8004</div>
           </div>
         </div>
+        <div class="dim" id="bq-net" style="margin-top:8px;font-size:11px"></div>
       </div>
       <div class="panel proof" style="flex:none">
         <div class="ph">◢ PROOF OF ACTION · WALRUS<span class="id" id="proof-id">—</span></div>
         <div id="proof"><div class="empty">no proof recorded</div></div>
+      </div>
+      <div class="panel" style="flex:none;border:1px solid #3a5a8a">
+        <div class="ph">◢ ORACLE VERIFICATION · CHAINLINK CRE<span class="id" id="cre-id">DON consensus</span></div>
+        <div id="cre"><div class="empty">awaiting decentralized verification…</div></div>
       </div>
     </div>
   </div>
@@ -398,6 +406,32 @@ async function tick(){
       $("ring-rep").setAttribute("stroke-dasharray", dash(avg/100, 302)); }
   }
 
+  const cr=await j("/cre/latest");
+  if(cr){
+    if(cr.configured && cr.exists){
+      $("b-cre").classList.toggle('lit', cr.verified);
+      const col=cr.verified?'var(--teal)':'var(--red)';
+      const txln=cr.tx?`<div class=kv><span class=dim>writeReport</span><span class=v><a href="${cr.explorer}/tx/${cr.tx}" target=_blank style="color:var(--teal)">${cr.tx.slice(0,10)}…↗</a></span></div>`:'';
+      $("cre").innerHTML=`<div class=kv><span>DON median score</span><span class=big style="color:${col};font-size:22px">${cr.score}/100</span></div>
+        <div class="gauge"><div style="width:${cr.score}%;background:${col}"></div></div>
+        <div class=kv><span class=dim>verdict</span><span class=v style="color:${col}">${cr.verified?'✓ VERIFIED (≥70)':'✗ below threshold'}</span></div>
+        <div class=kv><span class=dim>job</span><span class=v>${cr.job}</span></div>${txln}`;
+    } else if(cr.configured){
+      $("cre").innerHTML=`<div class=kv><span class=dim>job ${cr.job||''}</span><span class=v>consumer live · awaiting report</span></div>`;
+    } else {
+      $("cre").innerHTML=`<div class="empty">consumer not deployed yet</div>`;
+    }
+  }
+  const bqd=await j("/leaderboard/network");
+  if(bqd){ $("b-bq").classList.toggle('lit', !!bqd.configured && !bqd.error);
+    if(bqd.configured && bqd.rows && bqd.rows.length){
+      const top=bqd.rows[0];
+      $("bq-net").innerHTML=`◢ ERC-8004 network (BigQuery): <span style="color:var(--teal)">${bqd.rows.length} agents</span> · top ${top.agent} (${top.feedback} reviews)`;
+    } else if(bqd.configured){ $("bq-net").textContent="◢ ERC-8004 network: querying BigQuery…"; }
+  }
+  const pv=await j("/privy/status");
+  if(pv){ $("b-privy").classList.toggle('lit', !!pv.configured);
+    if(pv.custody==='privy-tee') $("b-privy").textContent='Privy · TEE custody'; }
   const p=await j("/proof/latest");
   if(p&&p.proof&&p.url){
     $("b-walrus").classList.add("lit");
