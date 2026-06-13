@@ -39,6 +39,24 @@
   .kv { display:flex; justify-content:space-between; padding:3px 0; border-bottom:1px solid var(--line); }
   .kv:last-child { border:0; } .kv .v { color:var(--dim); }
   #log { font-size:12px; color:var(--dim); max-height:140px; overflow:auto; white-space:pre-wrap; }
+  /* On-chain settlement — the hero panel */
+  .hero { grid-column:1 / -1; border:1px solid #2ea043;
+          box-shadow:0 0 28px rgba(63,185,80,.18); background:linear-gradient(180deg,#101a16,#141a24); }
+  .hero h2 { font-size:15px; color:var(--grn); letter-spacing:1.5px; display:flex;
+             align-items:center; gap:10px; }
+  .hero .live { width:9px; height:9px; border-radius:50%; background:var(--grn);
+                box-shadow:0 0 8px var(--grn); animation:pulse 1.4s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.35} }
+  #onchain { max-height:340px; overflow:auto; }
+  .oc { display:grid; grid-template-columns:84px 1fr auto; align-items:center; gap:14px;
+        padding:12px 10px; border-bottom:1px solid var(--line); font-size:15px; animation:slidein .4s; }
+  @keyframes slidein { from{opacity:0; transform:translateY(-6px)} to{opacity:1} }
+  .oc:first-child { background:rgba(63,185,80,.06); }
+  .oc .tag { font-weight:700; font-size:12px; text-transform:uppercase; letter-spacing:.5px;
+             padding:5px 10px; border-radius:6px; text-align:center; }
+  .oc .det { color:var(--txt); }
+  .oc .tx a { font-size:13px; color:var(--blu); }
+  .oc .ts { color:var(--dim); font-size:11px; }
 </style>
 </head>
 <body>
@@ -47,6 +65,11 @@
   <span class="sub">Mission Control · hire a robot over HTTP · ETHGlobal NYC 2026</span>
 </header>
 <div class="wrap">
+  <div class="card hero">
+    <h2><span class="live"></span>⛓️ ON-CHAIN SETTLEMENT — LIVE on Arc</h2>
+    <div id="onchain"><span class="addr">waiting for the first settlement…</span></div>
+  </div>
+
   <div class="card">
     <h2>Fleet</h2>
     <div id="fleet">loading…</div>
@@ -93,11 +116,6 @@
   </div>
 
   <div class="card full">
-    <h2>⛓️ On-Chain Settlement (live, Arc)</h2>
-    <div id="onchain"><span class="addr">waiting for the first settlement…</span></div>
-  </div>
-
-  <div class="card full">
     <h2>Activity</h2>
     <div id="log"></div>
   </div>
@@ -131,7 +149,8 @@ async function poll() {
     // wire live feeds once (avoid resetting the MJPEG stream each poll)
     for (const [name, r] of Object.entries(s.robots)) {
       const img = $("feed-" + name);
-      if (img && r.url && !img.src.includes("/stream")) img.src = r.url + "/stream";
+      const src = r.feed || (r.url ? r.url + "/stream" : null);
+      if (img && src && !img.src.endsWith(src)) img.src = src;
     }
     if (s.race && s.race.status) {
       $("auction-status").textContent = "race: " + s.race.status +
@@ -199,10 +218,14 @@ async function pollOnchain(){
     const ex = $("explorer").href.replace(/\/$/,'');
     if (!f.events || !f.events.length) return;
     $("onchain").innerHTML = f.events.map(e => {
-      const ts = new Date(e.t).toLocaleTimeString();
-      const link = e.tx ? `<a target="_blank" href="${ex}/tx/${e.tx}">${e.tx.slice(0,12)}…</a>` : '<span class="addr">pending</span>';
-      const tag = {PAY:'#3fb950',MINT:'#58a6ff',REPUTATION:'#d8a657',BET:'#bc8cff','RACE SETTLE':'#3fb950'}[e.kind]||'#7d8aa0';
-      return `<div class="kv"><span><b style="color:${tag}">${e.kind}</b> <span class="addr">${e.detail}</span></span><span class="v">${link}</span></div>`;
+      const secs = Math.max(0, Math.round((Date.now() - e.t)/1000));
+      const ts = secs < 60 ? `${secs}s ago` : `${Math.round(secs/60)}m ago`;
+      const link = e.tx ? `<a target="_blank" href="${ex}/tx/${e.tx}">${e.tx.slice(0,10)}…↗</a>` : '<span class="addr">pending</span>';
+      const c = {PAY:'#3fb950',MINT:'#58a6ff',REPUTATION:'#d8a657',BET:'#bc8cff','RACE SETTLE':'#3fb950'}[e.kind]||'#7d8aa0';
+      return `<div class="oc">
+        <span class="tag" style="color:${c};background:${c}1f">${e.kind}</span>
+        <span class="det">${e.detail}</span>
+        <span class="tx">${link}<div class="ts">${ts}</div></span></div>`;
     }).join("");
   } catch {}
 }

@@ -96,7 +96,7 @@ function renderLanes(robots, od, race){
   }
   $("lanes").innerHTML=h;
   for (const name of Object.keys(robots)){
-    const img=$("feed-"+name); if(img && robots[name].url && !img.src.includes("/stream")) img.src=robots[name].url+"/stream";
+    const img=$("feed-"+name); const src=robots[name].feed||(robots[name].url?robots[name].url+"/stream":null); if(img && src && !img.src.endsWith(src)) img.src=src;
   }
 }
 // REAL World ID: IDKit proof -> server verify -> nullifier-gated bet. No fakes.

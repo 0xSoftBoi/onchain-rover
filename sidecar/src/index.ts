@@ -29,6 +29,38 @@ process.on("uncaughtException", (e) => console.error("uncaughtException:", e));
 const app = express();
 app.use(express.json());
 
+// ----- DEMO_MOCK: fills every panel with realistic data so the dashboard can
+// be reviewed without live robots/funds. Unset DEMO_MOCK to go fully real. -----
+const MOCK = process.env.DEMO_MOCK === "1";
+const ex = (tx: string) => `${ARC.explorer}/tx/${tx}`;
+const mockStatus = () => ({
+  ok: true, arc: { chainId: ARC.chainId, explorer: ARC.explorer },
+  eventPass: "0x8004EVENTpass000000000000000000000000a1",
+  robots: {
+    guard: { ok: true, role: "guard", battery_v: 12.4, ens: "guard.roverfleet.eth",
+      wallet: ROBOTS.guard.wallet, usdc6: "6480000", url: ROBOTS.guard.url, feed: "/mock-cam.svg?guard" },
+    courier: { ok: true, role: "courier", battery_v: 12.1, ens: "courier.roverfleet.eth",
+      wallet: ROBOTS.courier.wallet, usdc6: "3250000", url: ROBOTS.courier.url, feed: "/mock-cam.svg?courier" },
+  },
+  race: { id: "demo-1", status: "betting", racers: ["guard", "courier"] },
+  ens: { parent: "roverfleet.eth", chain: "Sepolia",
+    guard: { name: "guard.roverfleet.eth", chain: "Sepolia", address: ROBOTS.guard.wallet, resolved: true, agentContext: "physical rover agent; skills: guard,deliver,race" },
+    courier: { name: "courier.roverfleet.eth", chain: "Sepolia", address: ROBOTS.courier.wallet, resolved: true, agentContext: "physical rover agent; skills: guard,deliver,race" } },
+});
+const mockFeed = () => ({ events: [
+  { t: Date.now() - 4000, kind: "PAY", detail: "courier → guard $1.25 USDC", tx: "0xa1b2c3d4e5f6072839ab", explorer: ex("0xa1b2c3d4e5f6072839ab") },
+  { t: Date.now() - 3500, kind: "MINT", detail: "EventPass → courier @ $1.25", tx: "0xbb22cc33dd44ee55ff66", explorer: ex("0xbb22cc33dd44ee55ff66") },
+  { t: Date.now() - 3000, kind: "REPUTATION", detail: "guard rated 95 (skill: guard)", tx: "0xcc33dd44ee55ff6601aa", explorer: ex("0xcc33dd44ee55ff6601aa") },
+  { t: Date.now() - 1500, kind: "BET", detail: "$2 on courier (World-verified human)", tx: "0xdd44ee55ff6601aa02bb", explorer: ex("0xdd44ee55ff6601aa02bb") },
+  { t: Date.now() - 500, kind: "RACE SETTLE", detail: "courier wins · proof DhDkmlGywO…", tx: "0xee55ff6601aa02bb03cc", explorer: ex("0xee55ff6601aa02bb03cc") },
+]});
+const mockRep = () => ({
+  guard: { ens: "guard.roverfleet.eth", count: 7, avg: 95 },
+  courier: { ens: "courier.roverfleet.eth", count: 4, avg: 91 },
+});
+const mockOdds = () => ({ pool: { guard: 3, courier: 5 }, total: 8,
+  odds: { guard: 2.67, courier: 1.6 }, count: 6 });
+
 const gateway = createGatewayMiddleware({
   sellerAddress: process.env.TREASURY_ADDRESS!,    // fleet treasury (Ledger-governed)
   facilitatorUrl: ARC.facilitatorUrl,              // testnet! default is mainnet
@@ -68,7 +100,7 @@ function logOnchain(kind: string, detail: string, tx?: string) {
     explorer: tx ? `${ARC.explorer}/tx/${tx}` : undefined });
   if (onchainFeed.length > 50) onchainFeed.pop();
 }
-app.get("/onchain/feed", (_req, res) => res.json({ events: onchainFeed.slice(0, 30) }));
+app.get("/onchain/feed", (_req, res) => res.json(MOCK ? mockFeed() : { events: onchainFeed.slice(0, 30) }));
 
 app.get("/robot/registry", (_req, res) => {
   res.json(Object.fromEntries([...liveRobots.entries()].map(([k, v]) =>
@@ -146,7 +178,7 @@ app.post("/race/bet", async (req, res) => {
     res.json({ ...odds, onchain });
   } catch (e: any) { res.status(400).json({ error: e.message }); }
 });
-app.get("/race/odds", (_req, res) => res.json(race.odds()));
+app.get("/race/odds", (_req, res) => res.json(MOCK ? mockOdds() : race.odds()));
 
 // --- Treasury (Ledger clear-sign governance climax) ------------------------
 app.get("/treasury/info", async (_req, res) => {
@@ -166,6 +198,7 @@ app.post("/treasury/broadcast", async (req, res) => {
 
 // ERC-8004 reputation summary (the leaderboard score) for each robot.
 app.get("/reputation", async (_req, res) => {
+  if (MOCK) return res.json(mockRep());
   const out: Record<string, any> = {};
   for (const [n, r] of Object.entries(ROBOTS)) {
     try { out[n] = { ens: r.ens, ...(await settle.repSummary(Number(r.agentId ?? 0))) }; }
@@ -383,6 +416,7 @@ app.post("/pilot/dev-authorize", async (req, res) => {
 // ---------- Mission-control dashboard --------------------------------------
 // One aggregate poll for the dashboard: robots + auction + on-chain balances.
 app.get("/status", async (_req, res) => {
+  if (MOCK) return res.json(mockStatus());
   const robots = await Promise.all(Object.entries(ROBOTS).map(async ([n, r]) => {
     let health: any = { ok: false, error: "unreachable" };
     try {
