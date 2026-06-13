@@ -61,6 +61,16 @@
   </div>
 
   <div class="card full">
+    <h2>📹 Live Feeds</h2>
+    <div style="display:flex; gap:12px; flex-wrap:wrap">
+      <div><div class="addr">guard.rover.eth</div>
+        <img id="feed-guard" style="width:340px; max-width:46vw; border-radius:8px; background:#000" /></div>
+      <div><div class="addr">courier.rover.eth</div>
+        <img id="feed-courier" style="width:340px; max-width:46vw; border-radius:8px; background:#000" /></div>
+    </div>
+  </div>
+
+  <div class="card full">
     <h2>🤠 Dutch Auction — EventPass</h2>
     <div class="auction">
       <div class="price" id="price">$—</div>
@@ -103,6 +113,11 @@ async function poll() {
       </div>`;
     }
     $("fleet").innerHTML = html;
+    // wire live feeds once (avoid resetting the MJPEG stream each poll)
+    for (const [name, r] of Object.entries(s.robots)) {
+      const img = $("feed-" + name);
+      if (img && r.url && !img.src.includes("/stream")) img.src = r.url + "/stream";
+    }
     if (s.race && s.race.status) {
       $("auction-status").textContent = "race: " + s.race.status +
         (s.race.winner ? ` · winner ${s.race.winner}` : "");

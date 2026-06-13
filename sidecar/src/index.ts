@@ -241,7 +241,7 @@ app.get("/status", async (_req, res) => {
     } catch {}
     let usdc6 = "0";
     try { if (r.wallet) usdc6 = (await settle.usdcBalance(r.wallet)).toString(); } catch {}
-    return [n, { ...health, ens: r.ens, wallet: r.wallet, usdc6 }];
+    return [n, { ...health, ens: r.ens, wallet: r.wallet, usdc6, url: r.url }];
   }));
   res.json({
     ok: true,

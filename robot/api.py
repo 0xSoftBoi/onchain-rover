@@ -13,7 +13,10 @@ import os
 import time
 
 from fastapi import FastAPI, WebSocket
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+
+import camera
 
 import threading
 
@@ -80,6 +83,25 @@ def seek(req: SeekReq):
 def capture():
     path, digest = agent.capture_photo()
     return {"photo": path, "sha256": digest}
+
+
+@app.get("/stream")
+def stream():
+    """MJPEG live feed (browser <img src> / dashboard / race view). Shares the
+    one camera with capture+seek via camera.py — no /dev/video0 contention."""
+    boundary = "frame"
+
+    def gen():
+        import time as _t
+        while True:
+            jpg = camera.jpeg(quality=65)
+            if jpg:
+                yield (b"--" + boundary.encode() + b"\r\n"
+                       b"Content-Type: image/jpeg\r\n\r\n" + jpg + b"\r\n")
+            _t.sleep(0.066)  # ~15 fps
+
+    return StreamingResponse(
+        gen(), media_type=f"multipart/x-mixed-replace; boundary={boundary}")
 
 
 @app.post("/verify-photo")
