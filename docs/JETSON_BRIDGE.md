@@ -73,6 +73,11 @@ Rust rover server exposes (each robot):
 `POST /motors/drive` · `POST /motors/stop` · `POST /estop` ·
 `POST /estop/reset` · `WS /ws/drive` · `WS /ws/telemetry`
 
+Sensor contract: `/sensors`, `/telemetry`, and `WS /ws/telemetry` all carry
+`sensors.battery`, `sensors.odometry`, `sensors.imu`, `sensors.lidar`,
+`sensors.camera`, and `sensors.raw_frame`. Lidar and missing camera data must be
+reported as unavailable, not silently omitted.
+
 Legacy Python FastAPI may still expose:
 `POST /seek {target}` · `POST /capture` → jpg+sha256 · `POST /verify-photo` →
 Gemini verdict · `POST /store-proof` → Walrus blobId · `POST /gibber/send` /

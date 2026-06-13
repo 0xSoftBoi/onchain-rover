@@ -160,9 +160,11 @@ struct TelemetryFrame {
     speed_mode: SpeedMode,
     max_speed: f64,
     last_raw_frame_ms: Option<u128>,
+    raw_frame_age_ms: Option<u128>,
     camera: CameraStatus,
     lidar: SensorAvailability,
     imu: ImuStatus,
+    sensors: SensorSnapshot,
     source: &'static str,
 }
 
@@ -177,6 +179,30 @@ struct CameraStatus {
 #[derive(Debug, Clone, Serialize)]
 struct SensorAvailability {
     status: &'static str,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct BatteryStatus {
+    status: &'static str,
+    voltage_v: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct RawFrameStatus {
+    status: &'static str,
+    source: &'static str,
+    last_ms: Option<u128>,
+    age_ms: Option<u128>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct SensorSnapshot {
+    battery: BatteryStatus,
+    odometry: OdometryStatus,
+    imu: ImuStatus,
+    lidar: SensorAvailability,
+    camera: CameraStatus,
+    raw_frame: RawFrameStatus,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -235,7 +261,7 @@ impl SerialRover {
                     Ok(_) if byte[0] == b'\n' => {
                         if let Ok(text) = std::str::from_utf8(&line) {
                             if let Some(parsed) = parse_esp32_telemetry(text.trim()) {
-                                *raw.write() = parsed;
+                                merge_raw_telemetry(&mut raw.write(), parsed);
                             }
                         }
                         line.clear();
@@ -388,10 +414,13 @@ struct SensorsResp {
     lidar: SensorAvailability,
     camera: CameraStatus,
     last_raw_frame_ms: Option<u128>,
+    raw_frame_age_ms: Option<u128>,
+    sensors: SensorSnapshot,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 struct OdometryStatus {
+    status: &'static str,
     left: Option<f64>,
     right: Option<f64>,
 }
@@ -403,13 +432,7 @@ async fn main() -> Result<()> {
         .init();
 
     let opts = Opts::parse();
-    let raw = Arc::new(RwLock::new(RawTelemetry {
-        source: match opts.mode {
-            Mode::Sim => "sim",
-            Mode::Serial => "serial",
-        },
-        ..RawTelemetry::default()
-    }));
+    let raw = Arc::new(RwLock::new(initial_raw_telemetry(opts.mode)));
     let command = Arc::new(Mutex::new(CommandState::default()));
 
     let rover: Arc<dyn RoverControl> = match opts.mode {
@@ -537,22 +560,21 @@ async fn telemetry(State(state): State<AppState>) -> Json<TelemetryFrame> {
 
 async fn sensors(State(state): State<AppState>) -> Json<SensorsResp> {
     let raw = state.raw.read().clone();
+    let ts_ms = now_ms();
+    let sensors = sensor_snapshot_for(&state, &raw, ts_ms);
     Json(SensorsResp {
         ok: true,
         role: state.role.clone(),
-        ts_ms: now_ms(),
+        ts_ms,
         source: raw.source,
         battery_v: raw.battery_v,
-        odometry: OdometryStatus {
-            left: raw.odometry_left,
-            right: raw.odometry_right,
-        },
-        imu: imu_status_for(&raw),
-        lidar: SensorAvailability {
-            status: "unavailable",
-        },
-        camera: camera_status_for(&state),
+        odometry: sensors.odometry.clone(),
+        imu: sensors.imu.clone(),
+        lidar: sensors.lidar.clone(),
+        camera: sensors.camera.clone(),
         last_raw_frame_ms: raw.last_raw_frame_ms,
+        raw_frame_age_ms: sensors.raw_frame.age_ms,
+        sensors,
     })
 }
 
@@ -1010,12 +1032,14 @@ fn spawn_sim_telemetry_loop(state: AppState) {
 fn current_telemetry_frame(state: &AppState) -> TelemetryFrame {
     let raw = state.raw.read().clone();
     let command = state.command.lock().clone();
+    let ts_ms = now_ms();
+    let sensors = sensor_snapshot_for(state, &raw, ts_ms);
     let deadman_ok = command
         .last_cmd_at
         .map(|last| last.elapsed() <= Duration::from_millis(state.deadman_ms))
         .unwrap_or(true);
     TelemetryFrame {
-        ts_ms: now_ms(),
+        ts_ms,
         robot: state.role.clone(),
         battery_v: raw.battery_v,
         left_cmd: command.left_cmd,
@@ -1030,11 +1054,11 @@ fn current_telemetry_frame(state: &AppState) -> TelemetryFrame {
         speed_mode: command.speed_mode,
         max_speed: command.speed_mode.cap(),
         last_raw_frame_ms: raw.last_raw_frame_ms,
-        camera: camera_status_for(state),
-        lidar: SensorAvailability {
-            status: "unavailable",
-        },
-        imu: imu_status_for(&raw),
+        raw_frame_age_ms: sensors.raw_frame.age_ms,
+        camera: sensors.camera.clone(),
+        lidar: sensors.lidar.clone(),
+        imu: sensors.imu.clone(),
+        sensors,
         source: raw.source,
     }
 }
@@ -1081,6 +1105,82 @@ fn camera_status_name(
     }
 }
 
+fn initial_raw_telemetry(mode: Mode) -> RawTelemetry {
+    match mode {
+        Mode::Sim => RawTelemetry {
+            battery_v: Some(12.2),
+            odometry_left: Some(0.0),
+            odometry_right: Some(0.0),
+            yaw: Some(0.0),
+            accel: Some([0.0, 0.0, 9.8]),
+            gyro: Some([0.0, 0.0, 0.0]),
+            mag: None,
+            source: "sim",
+            last_raw_frame_ms: Some(now_ms()),
+        },
+        Mode::Serial => RawTelemetry {
+            source: "serial",
+            ..RawTelemetry::default()
+        },
+    }
+}
+
+fn sensor_snapshot_for(state: &AppState, raw: &RawTelemetry, now: u128) -> SensorSnapshot {
+    SensorSnapshot {
+        battery: battery_status_for(raw),
+        odometry: odometry_status_for(raw),
+        imu: imu_status_for(raw),
+        lidar: lidar_status_for(),
+        camera: camera_status_for(state),
+        raw_frame: raw_frame_status_for(raw, now),
+    }
+}
+
+fn battery_status_for(raw: &RawTelemetry) -> BatteryStatus {
+    BatteryStatus {
+        status: if raw.battery_v.is_some() {
+            "available"
+        } else {
+            "unavailable"
+        },
+        voltage_v: raw.battery_v,
+    }
+}
+
+fn odometry_status_for(raw: &RawTelemetry) -> OdometryStatus {
+    OdometryStatus {
+        status: if raw.odometry_left.is_some() || raw.odometry_right.is_some() {
+            "available"
+        } else {
+            "unavailable"
+        },
+        left: raw.odometry_left,
+        right: raw.odometry_right,
+    }
+}
+
+fn lidar_status_for() -> SensorAvailability {
+    SensorAvailability {
+        status: "unavailable",
+    }
+}
+
+fn raw_frame_status_for(raw: &RawTelemetry, now: u128) -> RawFrameStatus {
+    let age_ms = raw
+        .last_raw_frame_ms
+        .map(|last_raw_frame| now.saturating_sub(last_raw_frame));
+    RawFrameStatus {
+        status: if raw.last_raw_frame_ms.is_some() {
+            "available"
+        } else {
+            "unavailable"
+        },
+        source: raw.source,
+        last_ms: raw.last_raw_frame_ms,
+        age_ms,
+    }
+}
+
 fn imu_status_for(raw: &RawTelemetry) -> ImuStatus {
     ImuStatus {
         status: if raw.accel.is_some()
@@ -1097,6 +1197,32 @@ fn imu_status_for(raw: &RawTelemetry) -> ImuStatus {
         mag: raw.mag,
         yaw: raw.yaw,
     }
+}
+
+fn merge_raw_telemetry(current: &mut RawTelemetry, parsed: RawTelemetry) {
+    if parsed.battery_v.is_some() {
+        current.battery_v = parsed.battery_v;
+    }
+    if parsed.odometry_left.is_some() {
+        current.odometry_left = parsed.odometry_left;
+    }
+    if parsed.odometry_right.is_some() {
+        current.odometry_right = parsed.odometry_right;
+    }
+    if parsed.yaw.is_some() {
+        current.yaw = parsed.yaw;
+    }
+    if parsed.accel.is_some() {
+        current.accel = parsed.accel;
+    }
+    if parsed.gyro.is_some() {
+        current.gyro = parsed.gyro;
+    }
+    if parsed.mag.is_some() {
+        current.mag = parsed.mag;
+    }
+    current.source = parsed.source;
+    current.last_raw_frame_ms = parsed.last_raw_frame_ms;
 }
 
 fn parse_esp32_telemetry(line: &str) -> Option<RawTelemetry> {
@@ -1305,6 +1431,36 @@ mod tests {
         let parsed = parse_esp32_telemetry(r#"{"T":1002,"y":42.5}"#).expect("attitude");
         assert_eq!(parsed.yaw, Some(42.5));
         assert_eq!(parsed.source, "serial");
+    }
+
+    #[test]
+    fn sim_raw_telemetry_starts_with_deterministic_sensor_values() {
+        let raw = initial_raw_telemetry(Mode::Sim);
+        assert_eq!(raw.battery_v, Some(12.2));
+        assert_eq!(raw.odometry_left, Some(0.0));
+        assert_eq!(raw.odometry_right, Some(0.0));
+        assert_eq!(raw.accel, Some([0.0, 0.0, 9.8]));
+        assert_eq!(raw.gyro, Some([0.0, 0.0, 0.0]));
+        assert_eq!(raw.yaw, Some(0.0));
+        assert_eq!(raw.source, "sim");
+        assert!(raw.last_raw_frame_ms.is_some());
+    }
+
+    #[test]
+    fn serial_partial_frames_merge_without_erasing_existing_sensors() {
+        let mut raw = parse_esp32_telemetry(
+            r#"{"T":1001,"v":1203,"odl":1.25,"odr":1.5,"ax":1,"ay":2,"az":3}"#,
+        )
+        .expect("base telemetry");
+        let attitude = parse_esp32_telemetry(r#"{"T":1002,"y":42.5}"#).expect("attitude");
+        merge_raw_telemetry(&mut raw, attitude);
+
+        assert_eq!(raw.battery_v, Some(12.03));
+        assert_eq!(raw.odometry_left, Some(1.25));
+        assert_eq!(raw.odometry_right, Some(1.5));
+        assert_eq!(raw.accel, Some([1.0, 2.0, 3.0]));
+        assert_eq!(raw.yaw, Some(42.5));
+        assert_eq!(raw.source, "serial");
     }
 
     #[test]

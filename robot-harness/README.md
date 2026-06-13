@@ -73,6 +73,20 @@ deferred until the Jetson camera stack is stable.
 - `WS /ws/drive`
 - `WS /ws/telemetry`
 
+`GET /sensors`, `GET /telemetry`, and `WS /ws/telemetry` expose the same
+grouped sensor contract under `sensors`:
+
+- `battery`: voltage and availability
+- `odometry`: left/right wheel odometry and availability
+- `imu`: accel/gyro/mag/yaw values when present
+- `lidar`: currently explicit `unavailable` until a hardware adapter is wired
+- `camera`: simulated/proxy/configured/unavailable camera status
+- `raw_frame`: source, latest raw telemetry timestamp, and frame age
+
+The telemetry frame also keeps the older flat fields (`battery_v`,
+`odometry_left`, `odometry_right`, `last_raw_frame_ms`) for current sidecar and
+pilot UI compatibility.
+
 Drive commands are clamped server-side by the session speed mode:
 
 - `low`: `0.15`

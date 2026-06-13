@@ -46,9 +46,18 @@ export type RobotTelemetry = {
   speed_mode: SpeedMode;
   max_speed: number;
   last_raw_frame_ms?: number;
+  raw_frame_age_ms?: number;
   source: "bridge" | "robot" | "sim";
   camera?: { status: string };
-  lidar?: { front_m?: number; min_m?: number; blocked?: boolean };
+  lidar?: { status?: string; front_m?: number; min_m?: number; blocked?: boolean };
+  sensors?: {
+    battery?: { status?: string; voltage_v?: number };
+    odometry?: { status?: string; left?: number; right?: number };
+    imu?: { status?: string };
+    lidar?: { status?: string; front_m?: number; min_m?: number; blocked?: boolean };
+    camera?: { status?: string };
+    raw_frame?: { status?: string; source?: string; last_ms?: number; age_ms?: number };
+  };
 };
 
 type RobotRuntime = {
@@ -334,6 +343,7 @@ function runtimeFor(robot: RobotName): RobotRuntime {
       max_speed: SPEED_CAPS.medium,
       source: "bridge",
       camera: { status: "unavailable" },
+      lidar: { status: "unavailable" },
     },
     telemetryHistory: [],
   };
@@ -399,9 +409,11 @@ function normalizeTelemetry(runtime: RobotRuntime, body: Record<string, any>): R
     speed_mode: speedMode,
     max_speed: maxSpeed,
     last_raw_frame_ms: finiteNumber(body.last_raw_frame_ms) ?? current.last_raw_frame_ms,
+    raw_frame_age_ms: finiteNumber(body.raw_frame_age_ms) ?? current.raw_frame_age_ms,
     source: body.source === "sim" ? "sim" : "robot",
     camera: normalizeCamera(body.camera) ?? current.camera,
     lidar: normalizeLidar(body.lidar) ?? current.lidar,
+    sensors: normalizeSensors(body.sensors) ?? current.sensors,
   };
 }
 
@@ -526,10 +538,58 @@ function normalizeLidar(value: unknown): RobotTelemetry["lidar"] | undefined {
   if (!value || typeof value !== "object") return undefined;
   const lidar = value as Record<string, unknown>;
   return {
+    status: typeof lidar.status === "string" ? lidar.status : undefined,
     front_m: finiteNumber(lidar.front_m),
     min_m: finiteNumber(lidar.min_m),
     blocked: typeof lidar.blocked === "boolean" ? lidar.blocked : undefined,
   };
+}
+
+function normalizeSensors(value: unknown): RobotTelemetry["sensors"] | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const sensors = value as Record<string, unknown>;
+  const battery = normalizeRecord(sensors.battery);
+  const odometry = normalizeRecord(sensors.odometry);
+  const rawFrame = normalizeRecord(sensors.raw_frame);
+  return {
+    battery: battery
+      ? {
+          status: stringField(battery.status),
+          voltage_v: finiteNumber(battery.voltage_v),
+        }
+      : undefined,
+    odometry: odometry
+      ? {
+          status: stringField(odometry.status),
+          left: finiteNumber(odometry.left),
+          right: finiteNumber(odometry.right),
+        }
+      : undefined,
+    imu: normalizeStatusOnly(sensors.imu),
+    lidar: normalizeLidar(sensors.lidar),
+    camera: normalizeCamera(sensors.camera),
+    raw_frame: rawFrame
+      ? {
+          status: stringField(rawFrame.status),
+          source: stringField(rawFrame.source),
+          last_ms: finiteNumber(rawFrame.last_ms),
+          age_ms: finiteNumber(rawFrame.age_ms),
+        }
+      : undefined,
+  };
+}
+
+function normalizeStatusOnly(value: unknown): { status?: string } | undefined {
+  const record = normalizeRecord(value);
+  return record ? { status: stringField(record.status) } : undefined;
+}
+
+function normalizeRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" ? (value as Record<string, unknown>) : undefined;
+}
+
+function stringField(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
 }
 
 function clamp(value: number, min: number, max: number) {

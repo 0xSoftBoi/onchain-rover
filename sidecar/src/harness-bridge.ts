@@ -46,7 +46,7 @@ function connectRobotTelemetry() {
         ...frame,
         robot,
         camera: frame.camera ?? { status: "harness" },
-        lidar: frame.lidar ?? { blocked: false },
+        lidar: frame.lidar ?? frame.sensors?.lidar ?? { status: "unavailable" },
       }));
     } catch {
       // Drop malformed harness telemetry.
@@ -129,27 +129,35 @@ function robotName(value: string): RobotName {
 
 function toSidecarTelemetry(frame: Record<string, any>) {
   const odom = Array.isArray(frame.odom) ? frame.odom : [];
+  const sensors = typeof frame.sensors === "object" && frame.sensors ? frame.sensors : undefined;
+  const sensorOdometry = typeof sensors?.odometry === "object" ? sensors.odometry : undefined;
+  const sensorBattery = typeof sensors?.battery === "object" ? sensors.battery : undefined;
   return {
+    ...frame,
     type: "telemetry",
-    source: "bridge",
-    ts_ms: Date.now(),
+    source: frame.source === "sim" ? "sim" : "robot",
+    ts_ms: finiteOr(frame.ts_ms, Date.now()),
     robot,
-    battery_v: finite(frame.battery_v),
-    left_cmd: 0,
-    right_cmd: 0,
-    odometry_left: finite(odom[0]),
-    odometry_right: finite(odom[1]),
-    deadman_ok: true,
-    stopped_by_deadman: false,
-    estop: false,
-    speed_mode: "medium",
-    max_speed: 0.35,
-    camera: { status: "jetson-api" },
-    lidar: { blocked: false },
-    imu: {
+    battery_v: finiteOptional(frame.battery_v) ?? finiteOptional(sensorBattery?.voltage_v),
+    left_cmd: finiteOr(frame.left_cmd, 0),
+    right_cmd: finiteOr(frame.right_cmd, 0),
+    odometry_left: finiteOptional(frame.odometry_left) ?? finiteOptional(sensorOdometry?.left) ?? finiteOptional(odom[0]),
+    odometry_right: finiteOptional(frame.odometry_right) ?? finiteOptional(sensorOdometry?.right) ?? finiteOptional(odom[1]),
+    deadman_ok: Boolean(frame.deadman_ok ?? true),
+    stopped_by_deadman: Boolean(frame.stopped_by_deadman ?? false),
+    estop: Boolean(frame.estop ?? false),
+    speed_mode: frame.speed_mode === "low" || frame.speed_mode === "medium" || frame.speed_mode === "high"
+      ? frame.speed_mode
+      : "medium",
+    max_speed: finiteOr(frame.max_speed, 0.35),
+    raw_frame_age_ms: finiteOptional(frame.raw_frame_age_ms),
+    camera: frame.camera ?? sensors?.camera ?? { status: "unavailable" },
+    lidar: frame.lidar ?? sensors?.lidar ?? { status: "unavailable" },
+    imu: frame.imu ?? {
       accel: Array.isArray(frame.accel) ? frame.accel : undefined,
       gyro: Array.isArray(frame.gyro) ? frame.gyro : undefined,
     },
+    sensors,
     action: frame.action,
   };
 }
@@ -157,6 +165,15 @@ function toSidecarTelemetry(frame: Record<string, any>) {
 function finite(value: unknown) {
   const number = Number(value);
   return Number.isFinite(number) ? number : 0;
+}
+
+function finiteOptional(value: unknown): number | undefined {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : undefined;
+}
+
+function finiteOr(value: unknown, fallback: number) {
+  return finiteOptional(value) ?? fallback;
 }
 
 function sleep(ms: number) {
