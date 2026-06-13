@@ -48,7 +48,8 @@ def _audio_send(payload: str):
     import ggwave
     import sounddevice as sd
     import numpy as np
-    waveform = ggwave.encode(payload, protocolId=1, volume=80)
+    vol = 25 if os.environ.get("NIGHT") == "1" else 80   # quiet for night testing
+    waveform = ggwave.encode(payload, protocolId=1, volume=vol)
     audio = np.frombuffer(waveform, dtype=np.float32)
     sd.play(audio, samplerate=48000, blocking=True, device=_usb_device("output"))
 

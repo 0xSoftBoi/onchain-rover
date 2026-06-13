@@ -12,8 +12,11 @@ PIPER_MODEL = os.environ.get(
     "PIPER_MODEL", os.path.expanduser("~/piper-tts/en_US-lessac-medium.onnx"))
 PIPER_BIN = os.environ.get(
     "PIPER_BIN", os.path.expanduser("~/.local/bin/piper"))
-# espeak: -s words/min, -p pitch, -a amplitude. Lower pitch = more "robot".
-ESPEAK_ARGS = os.environ.get("ESPEAK_ARGS", "-s 165 -p 35 -a 200").split()
+# espeak: -s words/min, -p pitch, -a amplitude (0-200). NIGHT mode cuts volume
+# to ~1/3 for testing while people sleep; AMP overrides directly. For the final
+# demo: unset NIGHT (or AMP=200) to go loud again.
+AMP = int(os.environ.get("AMP", "67" if os.environ.get("NIGHT") == "1" else "200"))
+ESPEAK_ARGS = os.environ.get("ESPEAK_ARGS", f"-s 165 -p 35 -a {AMP}").split()
 # Play straight to the USB audio card via aplay — Pulse defaults to the dead
 # onboard jack on the Jetson. `aplay -L`/`/proc/asound/cards`: USB = card 1.
 AUDIO_DEV = os.environ.get("AUDIO_DEV", "plughw:1,0")
@@ -21,8 +24,8 @@ AUDIO_DEV = os.environ.get("AUDIO_DEV", "plughw:1,0")
 # Named voice characters (espeak-ng args). The seller is a Texas auctioneer:
 # American-English male variant, slower drawl, a touch of pitch swing.
 VOICES = {
-    "robot": "-s 165 -p 35 -a 200".split(),                  # courier/default
-    "texas": "-v en-us+m3 -s 145 -p 45 -a 200 -g 8".split(),  # auctioneer drawl
+    "robot": f"-s 165 -p 35 -a {AMP}".split(),                  # courier/default
+    "texas": f"-v en-us+m3 -s 145 -p 45 -a {AMP} -g 8".split(),  # auctioneer drawl
 }
 
 

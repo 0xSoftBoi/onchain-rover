@@ -200,6 +200,27 @@ def worldid(req: WorldVerifyReq):
     return world_verify.verify(req.idkit_result, req.action)
 
 
+class VolumeReq(BaseModel):
+    percent: int = 33   # night testing ~33%; demo ~100%
+
+
+@app.post("/volume")
+def set_volume(req: VolumeReq):
+    """Set the USB speaker hardware mixer % (affects voice + chirps). No SSH."""
+    import subprocess
+    pct = max(0, min(100, req.percent))
+    out = {}
+    for ctl in ("Speaker", "PCM", "Master"):
+        try:
+            subprocess.run(["amixer", "-c", "1", "sset", ctl, f"{pct}%"],
+                           timeout=5, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            out[ctl] = pct
+        except Exception:
+            pass
+    log_event("VOLUME", f"{pct}%")
+    return {"ok": True, "percent": pct, "controls": out}
+
+
 @app.post("/say")
 def say(req: TextReq):
     log_event("SAY", req.text)
