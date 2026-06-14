@@ -98,17 +98,26 @@ flowchart LR
 ### 1. Navigation foundation model — `nav_policy_server.py` + `nomad_client.py`
 Off-board policy server runs **NoMaD / ViNT / GNM** via the
 [`general-navigation`](https://github.com/AdityaNG/general-navigation) package,
-wrapping its `GPTVision.step()` stepper exactly (diffusion policy + MPC, internal
-temporal context). It turns a live camera frame into a steer command in `[-1, 1]`;
-`steer_to_twist()` maps that to a unicycle `(v, w)`. The Jetson runs only the dumb
-fast half (grab → POST → relay), keeping the NX free for capture + control — the
-**LeRobot async PolicyServer/RobotClient** pattern.
+wrapping its `GPTVision.step()` stepper exactly (diffusion policy, internal temporal
+context). Each frame the policy emits an 8-waypoint trajectory; we steer off the
+first non-trivial waypoint (`x` lateral, `y` forward) through `waypoint_to_twist()`
+→ a unicycle `(v, w)`. The Jetson runs only the dumb fast half (grab → POST →
+relay), keeping the NX free for capture + control — the **LeRobot async
+PolicyServer/RobotClient** pattern.
 
 - Backends: `nomad` (real model) | `stub` (creep-forward, validates the whole loop
   with no model + no robot).
 - Relay: ROS2 `/cmd_vel` (via `ros2_bridge.py`) or HTTP to api.py `/drive`.
 - *Note:* the packaged NoMaD runs goal-**masked** exploration (obstacle-aware
   forward nav following a learned prior); the goal **direction** comes from RoboBrain.
+
+> **Gotcha (verified against real `nomad.pth` weights).** `general-navigation` also
+> exposes `controls.steer`, but it comes from a **car bicycle-model MPC** (2.84 m
+> wheelbase) that needs a non-zero *vehicle speed* — at a small rover's `velocity=0`
+> it collapses to exactly `0`, so steering off `controls.steer` makes the rover drive
+> dead-straight. We steer off the **trajectory waypoint** instead, which is valid at
+> any speed and matches a differential base. `NAV_LAT_SIGN` flips the lateral axis if
+> a build mirrors it; `NAV_STEER_SIGN` flips turn direction. (Fix: commit `061bd28`.)
 
 ### 2. ROS2 bridge — `ros2_bridge.py`
 Makes the rover a first-class ROS2 node so Nav2 / Isaac ROS (cuVSLAM + Nvblox) can
@@ -206,7 +215,8 @@ If the rover turns the wrong way on the first real run, flip `NAV_STEER_SIGN=-1`
 | `NAV_SERVER` | `localhost:4041` | NoMaD policy server URL |
 | `BRAIN_SERVER` | _(unset)_ | RoboBrain server URL (enables semantic goal-seeking) |
 | `BRAIN_GOAL` | `the checkpoint` | NL target the brain points at |
-| `NAV_STEER_SIGN` | `1.0` | Flip to `-1` if steering is mirrored |
+| `NAV_STEER_SIGN` | `1.0` | Flip to `-1` if turn direction is mirrored |
+| `NAV_LAT_SIGN` | `1.0` | Flip to `-1` if the trajectory's lateral axis is mirrored |
 | `ROVER_ODOM_SCALE` | `0.0001` | Metres per encoder tick (calibrate on a 1 m drive) |
 | `REDIS_URL` | `localhost:6379` | RoboOS shared memory |
 
