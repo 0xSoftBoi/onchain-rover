@@ -1,13 +1,14 @@
-# The Onchain Rover — ETHGlobal NYC 2026
+# 🏁 The Clanker 500 — ETHGlobal NYC 2026
+### Two robots. Real USDC on the line. Every lap settled on-chain.
 
-### Give your AI agent a body.
+*(formerly "The Onchain Rover")*
 
-Every agent at this hackathon is trapped behind a screen. We gave two of them
-bodies: a fleet of **Waveshare UGV rovers (Jetson Orin NX)** that you **hire over
-HTTP**, that earn an **on-chain reputation**, and whose **treasury only a human
-can unlock with a Ledger**. Identity, payments, reputation, a labor market, and
-human governance — every sponsor doing real work, with a robot on the table the
-whole time.
+Every other agent at this hackathon is stuck in the pits — behind a screen. We put two
+of them on the track: a fleet of **Waveshare UGV rovers (Jetson Orin NX)** that you
+**hire over HTTP**, that earn an **on-chain reputation**, and whose **winnings only a
+human can unlock with a Ledger**. Identity, payments, reputation, a labor market, and
+human governance — every sponsor doing real work, with a robot on the table the whole
+time.
 
 **Sponsors, at a glance:** ENS + ERC-8004 (identity & reputation) · x402 + Circle/Arc
 (USDC wages & gas) · World ID (sybil-proof betting) · Walrus (proof storage) ·
@@ -21,7 +22,10 @@ Blink (instant wallets & on-ramp).
 
 ### Links & meta
 - 🎥 **Demo video (3 min):** _TODO: paste link before submitting_
-- 🌐 **Live dashboard:** `http://<deployed>/wall.html`
+- 🏁 **Live dashboard (no setup):** **https://0xsoftboi.github.io/onchain-rover/** — the
+  full **Clanker 500** wall, running standalone in your browser (mock data baked in).
+- 🌐 **Local dashboards (with sidecar on :4021):** `mux.html` (the unified Clanker 500
+  wall) · `wall.html` (cinematic big-screen) · `index.html` (Mission Control)
 - 📜 **License:** _TODO: add a LICENSE file (MIT recommended)_
 - 👥 **Team:** _TODO: names / ETHGlobal handles_
 - 🔍 **Start here:** `sidecar/settle.ts` (all on-chain writes) · `contracts/` (deployed
@@ -34,18 +38,18 @@ Blink (instant wallets & on-ramp).
 ```
 
 ## The two acts
-- **Act 1 — The Checkpoint:** a courier robot is hired, drives to the guard
+- **Qualifying — The Checkpoint:** a courier robot is hired, drives to the guard
   robot, they greet in speech then **switch to GibberLink** (data-over-sound);
   the guard verifies it **on-chain** (signed challenge + AgentBook human-backing +
   ERC-8004 + EventPass) → rejects it → the robots run a **Texas-auctioneer Dutch
   auction** to negotiate the pass price → pay + mint on Arc → admitted → proof to
   Walrus → reputation ticks up.
-- **Act 2 — Rover GP:** spectators **pay to pilot** the rovers ($1 x402 sessions,
-  WebSocket joystick + deadman) and **bet USDC** on a fruit-obstacle drag race
-  (parimutuel, **one bet per human via real World ID**), settled on-chain by the
+- **Race day — The Clanker 500:** spectators **pay to pilot** the rovers ($1 x402
+  sessions, WebSocket joystick + deadman) and **bet USDC** on a fruit-obstacle drag
+  race (parimutuel, **one bet per human via real World ID**), settled on-chain by the
   guard robot's Walrus-anchored finish photo.
-- **Climax:** withdrawing the fleet's earnings **blocks** until a human
-  clear-signs on a **Ledger** (ERC-7730: "Withdraw N USDC → recipient").
+- **Parc Fermé (the climax):** withdrawing the fleet's earnings **blocks** until a
+  human clear-signs on a **Ledger** (ERC-7730: "Withdraw N USDC → recipient").
 
 ## Autonomy stack
 
@@ -212,6 +216,24 @@ node --import tsx src/index.ts          # sidecar + dashboards on :4021
 npx tsx src/register-ens.ts             # real ENS on Sepolia
 npx tsx src/go-live.ts                  # deploy contracts + run the full on-chain loop
 ```
+
+### The dashboard — the Clanker 500 wall
+One unified "wall of mini terminals" shows the whole stack at once — onboard cams,
+on-device Gemma3 reasoning, the live **RACE CONTROL** event bus, pending→confirmed
+settlements (with gas/block/latency), parimutuel odds, World ID betting, reputation,
+the photo-finish proof on Walrus, and the Ledger-governed winner's purse — laid out as
+the three-act arc (Qualifying → The Main Event → Chequered Flag).
+
+- **Published, zero-setup:** **https://0xsoftboi.github.io/onchain-rover/** runs fully
+  standalone — `site/clanker-mock.js` patches `fetch` + `EventSource` so every tile
+  animates with no backend. Source lives in [`site/`](site/); deployed on the
+  `gh-pages` branch.
+- **Attach a live rig:** append `?api=<sidecar-url>` (e.g. an ngrok tunnel) to stream
+  **real** data, with automatic fall-back to mock per-call if the backend is down.
+  Requires the current sidecar build (the bus lives at `GET /events/stream`) — CORS is
+  enabled for read-only viewers.
+- **Local (with sidecar on :4021):** open `mux.html`. `DEMO_MOCK=1 npm start` fills
+  every panel server-side for hardware-free review.
 
 ### No robot? No GPU? Run the whole loop anyway
 Every off-board service has a `stub` backend, so a judge can validate the full
