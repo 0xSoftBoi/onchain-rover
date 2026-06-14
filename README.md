@@ -29,6 +29,73 @@ whole time.
 - **Climax:** withdrawing the fleet's earnings **blocks** until a human
   clear-signs on a **Ledger** (ERC-7730: "Withdraw N USDC → recipient").
 
+## Autonomy stack
+
+Act 1 isn't a scripted handshake — it runs a state-of-the-art embodied-AI pipeline:
+a **navigation foundation model** (NoMaD/ViNT) for control, an **embodied-reasoning
+VLM** (RoboBrain 2.0) for semantic goals, and a **hierarchical multi-agent OS**
+(RoboOS) for Guard⇄Courier coordination. Heavy models run off-board on a laptop GPU
+(LeRobot async pattern); the Jetson runs only the real-time loop. Full write-up in
+**[ROBOTICS.md](ROBOTICS.md)**.
+
+```mermaid
+flowchart TB
+    task(["🗣️ Natural-language task"]) --> Brain
+    subgraph CLOUD["☁️ Off-board · laptop GPU"]
+      direction TB
+      Brain["<b>RoboOS Master · Brain</b><br/>MLLM · task decomposition + routing"]
+      RB["<b>brain_service.py</b><br/>RoboBrain 2.0 VLM<br/><i>where is the target?</i>"]
+      NM["<b>nav_policy_server.py</b><br/>NoMaD / ViNT foundation model<br/><i>how do I steer?</i>"]
+    end
+    subgraph EDGE["🤖 On Jetson Orin NX"]
+      direction TB
+      AG["<b>agent.py · NomadNavigator</b><br/>Act 1 goal executor"]
+      BR["<b>ros2_bridge.py</b><br/>/cmd_vel ⇄ /odom + TF"]
+      RV["<b>rover.py</b><br/>ESP32 serial · drive · turn · bump"]
+      MEM[("<b>roboos_memory.py</b><br/>Real-Time Shared Memory")]
+    end
+    Brain -->|subtasks| AG
+    AG -->|"/think {img, goal}"| RB
+    RB -->|"bearing + arrived"| AG
+    AG -->|"/infer {img}"| NM
+    NM -->|"steer (v, w)"| AG
+    AG --> BR --> RV
+    MEM <-->|"pose / state"| AG
+    classDef cloud fill:#1e293b,stroke:#38bdf8,color:#e2e8f0;
+    classDef edge fill:#14532d,stroke:#4ade80,color:#dcfce7;
+    class Brain,RB,NM cloud;
+    class AG,BR,RV,MEM edge;
+```
+
+### Act 1 — "The Checkpoint" end-to-end
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant B as 🧠 Brain (RoboOS)
+    participant C as 🚚 Courier
+    participant G as 🛡️ Guard
+    participant M as 🗂️ Shared Memory
+    participant X as ⛓️ x402 / Arc
+    B->>C: navigate_to_target("checkpoint")
+    activate C
+    C->>C: NoMaD steer + RoboBrain bearing
+    C->>M: update(action=at_checkpoint, pose)
+    C->>G: announce_identity (signed challenge)
+    deactivate C
+    activate G
+    G->>X: verify_agent (ERC-8004 + pass NFT)
+    alt courier not verified
+        G-->>C: deny + negotiate_price (Dutch auction)
+        C->>X: pay_for_passage(agreed price)
+    end
+    G->>M: update(action=admitted)
+    G->>G: admit (open checkpoint)
+    deactivate G
+    M-->>C: wait_for(guard, admitted) ✓
+    C->>X: capture + Walrus proof + ERC-8004 feedback
+```
+
 ## What's real (not mocked)
 Every integration is real code — on-chain reads/writes or real signatures, no
 fake data (`grep` the repo: no `Math.random` nullifiers, no stubs):
