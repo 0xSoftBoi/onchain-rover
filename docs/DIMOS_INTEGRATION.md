@@ -1,4 +1,4 @@
-# Integrating DimOS into The Onchain Rover
+# Integrating DimOS into Clanker500
 
 [DimOS](https://github.com/dimensionalOS/dimos) (dimensionalOS, Apache-2.0,
 ~v0.0.12 alpha) is an "agentive OS for physical space": a **reactive dataflow of

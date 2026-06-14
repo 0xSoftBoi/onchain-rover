@@ -92,6 +92,12 @@ struct Opts {
     #[arg(long, env = "ROVER_CAMERA_FPS", default_value_t = 30)]
     camera_fps: u32,
 
+    #[arg(long, env = "ROVER_CAMERA_OUTPUT_FPS")]
+    camera_output_fps: Option<u32>,
+
+    #[arg(long, env = "ROVER_CAMERA_JPEG_QUALITY")]
+    camera_jpeg_quality: Option<u8>,
+
     #[arg(long, env = "ROVER_FFMPEG", default_value = "/usr/bin/ffmpeg")]
     ffmpeg: String,
 
@@ -477,6 +483,8 @@ struct CameraHub {
     device: String,
     size: String,
     fps: u32,
+    output_fps: Option<u32>,
+    jpeg_quality: Option<u8>,
     ffmpeg: String,
     latest: Arc<RwLock<Option<Vec<u8>>>>,
     tx: broadcast::Sender<Vec<u8>>,
@@ -484,12 +492,21 @@ struct CameraHub {
 }
 
 impl CameraHub {
-    fn new(device: String, size: String, fps: u32, ffmpeg: String) -> Self {
+    fn new(
+        device: String,
+        size: String,
+        fps: u32,
+        output_fps: Option<u32>,
+        jpeg_quality: Option<u8>,
+        ffmpeg: String,
+    ) -> Self {
         let (tx, _) = broadcast::channel(16);
         Self {
             device,
             size,
             fps,
+            output_fps,
+            jpeg_quality,
             ffmpeg,
             latest: Arc::new(RwLock::new(None)),
             tx,
@@ -512,29 +529,40 @@ impl CameraHub {
     async fn capture_loop(self) {
         loop {
             let fps = self.fps.to_string();
+            let mut args = vec![
+                "-nostdin".to_string(),
+                "-hide_banner".to_string(),
+                "-loglevel".to_string(),
+                "warning".to_string(),
+                "-f".to_string(),
+                "v4l2".to_string(),
+                "-input_format".to_string(),
+                "mjpeg".to_string(),
+                "-video_size".to_string(),
+                self.size.clone(),
+                "-framerate".to_string(),
+                fps,
+                "-i".to_string(),
+                self.device.clone(),
+                "-an".to_string(),
+            ];
+            if self.output_fps.is_some() || self.jpeg_quality.is_some() {
+                if let Some(output_fps) = self.output_fps {
+                    args.extend(["-vf".to_string(), format!("fps={}", output_fps.max(1))]);
+                }
+                args.extend([
+                    "-c:v".to_string(),
+                    "mjpeg".to_string(),
+                    "-q:v".to_string(),
+                    self.jpeg_quality.unwrap_or(8).clamp(2, 31).to_string(),
+                ]);
+            } else {
+                args.extend(["-c:v".to_string(), "copy".to_string()]);
+            }
+            args.extend(["-f".to_string(), "mjpeg".to_string(), "pipe:1".to_string()]);
+
             let mut child = match Command::new(&self.ffmpeg)
-                .args([
-                    "-nostdin",
-                    "-hide_banner",
-                    "-loglevel",
-                    "warning",
-                    "-f",
-                    "v4l2",
-                    "-input_format",
-                    "mjpeg",
-                    "-video_size",
-                    &self.size,
-                    "-framerate",
-                    &fps,
-                    "-i",
-                    &self.device,
-                    "-an",
-                    "-c:v",
-                    "copy",
-                    "-f",
-                    "mjpeg",
-                    "pipe:1",
-                ])
+                .args(&args)
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
                 .spawn()
@@ -762,6 +790,8 @@ async fn main() -> Result<()> {
             device.clone(),
             opts.camera_size.clone(),
             opts.camera_fps,
+            opts.camera_output_fps,
+            opts.camera_jpeg_quality,
             opts.ffmpeg.clone(),
         )
     });
@@ -1959,7 +1989,10 @@ fn camera_status_for(state: &AppState) -> CameraStatus {
         fps: if status == "simulated" {
             Some(10.0)
         } else {
-            state.camera_hub.as_ref().map(|hub| hub.fps as f64)
+            state
+                .camera_hub
+                .as_ref()
+                .map(|hub| hub.output_fps.unwrap_or(hub.fps) as f64)
         },
         last_frame_age_ms: if status == "simulated" || state.camera_hub.is_some() {
             Some(0)

@@ -1,5 +1,5 @@
 /**
- * Rover sidecar — the crypto rails + PUBLIC paid surface (port 4021).
+ * Clanker500 sidecar — the crypto rails + PUBLIC paid surface (port 4021).
  *
  * Paid routes sit behind Circle's x402 Gateway middleware (nanopayments on
  * Arc testnet, gas-free EIP-3009). Free routes serve the demo orchestrator
@@ -221,6 +221,7 @@ const gateway = createGatewayMiddleware({
 });
 const RACE_NETWORK_FEE_USDC = normalizeUsdcAmount(process.env.RACE_NETWORK_FEE_USDC ?? "0.25");
 const raceJoinFeeGate = gateway.require(`$${RACE_NETWORK_FEE_USDC}`);
+const autoStartTimers = new Map<string, NodeJS.Timeout>();
 
 // Live robot registry — robots heartbeat their current IP here, so venue DHCP
 // drift never breaks the demo. Falls back to the static .env URL if stale.
@@ -357,7 +358,7 @@ app.post("/task/:robot", gateway.require("$0.50"), async (req, res) => {
   res.json({ payment: (req as any).payment, result: await r.json() });
 });
 
-// Rover GP: pay to pilot ($1 per 120s session).
+// Clanker500 GP: pay to pilot ($1 per 120s session).
 app.post("/pilot/:robot/start", gateway.require("$1.00"), async (req, res) => {
   const payer = (req as any).payment?.payer ?? "anon";
   res.json(await race.startPilotSession(req.params.robot as RobotName, payer));
@@ -855,6 +856,20 @@ app.post("/race/round/:id/chain/settle", async (req, res) => {
   } catch (e: any) { res.status(400).json({ error: e.message }); }
 });
 
+app.get("/race/round/:id/operator/settlement-preflight", (req, res) => {
+  try {
+    const winner = req.query.winner ? requireDriverSlot(req.query.winner) : undefined;
+    res.json(operatorSettlementPreflight(rounds.getRound(req.params.id), winner));
+  } catch (e: any) { res.status(400).json({ error: e.message }); }
+});
+
+app.post("/race/round/:id/operator/settle-winner", async (req, res) => {
+  try {
+    const winner = requireDriverSlot(req.body.winner);
+    res.json(await settleOperatorWinner(req.params.id, winner, req.body.proof));
+  } catch (e: any) { res.status(400).json({ error: e.message }); }
+});
+
 app.post("/race/round/:id/chain/cancel", async (req, res) => {
   try {
     const reason = String(req.body.reason ?? "canceled");
@@ -892,8 +907,51 @@ app.post("/race/round/:id/fee-paid", (req, res) => {
 });
 
 app.post("/race/round/:id/stake-authorize", (req, res) => {
-  try { res.json(rounds.authorizeStake(req.params.id, req.body.slot, req.body.authorization)); }
-  catch (e: any) { res.status(400).json({ error: e.message }); }
+  try {
+    const round = rounds.authorizeStake(req.params.id, req.body.slot, req.body.authorization);
+    maybeAutoStartShowRound(req.params.id);
+    res.json(round);
+  } catch (e: any) { res.status(400).json({ error: e.message }); }
+});
+
+app.post("/race/round/:id/show-enter", (req, res) => {
+  try {
+    if (process.env.ALLOW_SHOW_X402_FALLBACK !== "1") {
+      return res.status(403).json({ error: "show x402 fallback disabled" });
+    }
+    const slot = requireDriverSlot(req.body.slot);
+    const wallet = requireWalletAddress(req.body.wallet);
+    const displayName = optionalString(req.body.displayName);
+    let round = rounds.getRound(req.params.id);
+    const existing = round.drivers[slot];
+    if (!existing?.wallet) {
+      round = rounds.claimSlot(req.params.id, slot, { wallet, displayName });
+    } else if (existing.wallet.toLowerCase() !== wallet.toLowerCase()) {
+      throw new Error(`${slot} is claimed by a different wallet`);
+    }
+    if (!round.drivers[slot]?.feePaid) {
+      round = rounds.markFeePaid(req.params.id, slot, {
+        status: "paid",
+        source: "x402",
+        amountUsdc: round.feeUsdc,
+        amountUnits: parseUsdcUnits(round.feeUsdc).toString(),
+        recipientTreasury: process.env.TREASURY_ADDRESS,
+        payer: wallet,
+        displayName,
+        reason: optionalString(req.body.reason),
+      });
+    }
+    if (!round.drivers[slot]?.stakeAuthorized) {
+      round = rounds.authorizeStake(req.params.id, slot, {
+        adapter: "manual",
+        status: "verified",
+        source: "show-x402-entry",
+        amountUsdc: "0",
+      });
+    }
+    maybeAutoStartShowRound(req.params.id);
+    res.json({ round, slot, ready: round.status === "ready" });
+  } catch (e: any) { res.status(400).json({ error: e.message }); }
 });
 
 app.post("/race/round/:id/stake/prepare", (req, res) => {
@@ -911,7 +969,9 @@ app.post("/race/round/:id/stake/verify", async (req, res) => {
     const slot = requireDriverSlot(req.body.slot);
     const adapter = stakeAdapters.stakeAdapter(req.body.adapter);
     const authorization = await adapter.verifyStake(round, slot, req.body);
-    res.json(rounds.authorizeStake(req.params.id, slot, authorization as Record<string, unknown>));
+    const updated = rounds.authorizeStake(req.params.id, slot, authorization as Record<string, unknown>);
+    maybeAutoStartShowRound(req.params.id);
+    res.json(updated);
   } catch (e: any) { res.status(400).json({ error: e.message }); }
 });
 
@@ -1070,8 +1130,8 @@ app.post("/race/round/:id/pilot/session", (req, res) => {
     if (round.status === "locked" && !round.roundStartsAt) {
       throw new Error("countdown has not been scheduled");
     }
-    if (process.env.ALLOW_FREE_PILOT !== "1") {
-      throw new Error("round pilot delegation requires ALLOW_FREE_PILOT=1 in the local harness");
+    if (process.env.ALLOW_ROUND_PILOT !== "1" && process.env.ALLOW_FREE_PILOT !== "1") {
+      throw new Error("round pilot delegation requires ALLOW_ROUND_PILOT=1");
     }
     const publicBaseUrl = process.env.PUBLIC_SIDECAR_URL
       || `${req.protocol}://${req.get("host")}`;
@@ -1194,6 +1254,7 @@ function recordRaceJoinFee(req: express.Request, res: express.Response) {
 
     const payment = x402RaceFeePayment(req, join.wallet, join.displayName);
     round = rounds.markFeePaid(req.params.id, join.slot, payment);
+    maybeAutoStartShowRound(req.params.id);
     res.json({
       round,
       slot: join.slot,
@@ -1204,6 +1265,66 @@ function recordRaceJoinFee(req: express.Request, res: express.Response) {
   } catch (e: any) {
     res.status(400).json({ error: e.message });
   }
+}
+
+function maybeAutoStartShowRound(roundId: string) {
+  if (process.env.ALLOW_SHOW_RACE_AUTOSTART !== "1") return;
+  if (autoStartTimers.has(roundId)) return;
+
+  let round: rounds.Round;
+  try {
+    round = rounds.getRound(roundId);
+  } catch {
+    return;
+  }
+  if (round.status !== "ready") return;
+  if (!isShowRaceReady(round)) return;
+
+  try {
+    round = rounds.lockRoundLocal(roundId);
+    evidence.recordRoundSnapshot(round, "locked");
+    round = rounds.startCountdown(roundId);
+    telemetryTrace.appendRoundTraceEvent(round, "countdown-start", {
+      countdownSecs: round.countdownSecs,
+      roundStartsAt: round.roundStartsAt ?? null,
+      source: "show-autostart",
+    }, { atMs: round.countdownStartedAt });
+
+    const delayMs = Math.max(0, (round.roundStartsAt ?? Date.now()) - Date.now());
+    const timer = setTimeout(() => {
+      autoStartTimers.delete(roundId);
+      try {
+        const current = rounds.getRound(roundId);
+        if (current.status !== "countdown") return;
+        const started = rounds.startRace(roundId);
+        evidence.recordRoundSnapshot(started, "started");
+        telemetryTrace.appendRoundTraceEvent(started, "go", {
+          startedAt: started.startedAt ?? null,
+          durationSecs: started.durationSecs,
+          source: "show-autostart",
+        }, { atMs: started.startedAt });
+      } catch (e: any) {
+        console.error(`[show-race] start ${roundId}: ${e.message}`);
+      }
+    }, delayMs);
+    autoStartTimers.set(roundId, timer);
+  } catch (e: any) {
+    console.error(`[show-race] autostart ${roundId}: ${e.message}`);
+  }
+}
+
+function isShowRaceReady(round: rounds.Round) {
+  if (round.chainRaceId) return false;
+  return (["challenger", "opponent"] as const).every((slot) => {
+    const driver = round.drivers[slot];
+    return Boolean(
+      driver?.wallet &&
+      driver.feePaid &&
+      driver.feePayment?.source === "x402" &&
+      driver.feePayment.status === "paid" &&
+      driver.stakeAuthorized,
+    );
+  });
 }
 
 function validateRaceJoinFeePreflight(
@@ -1324,6 +1445,176 @@ function formatUsdcUnits(units: bigint): string {
   const whole = units / 1_000_000n;
   const fraction = (units % 1_000_000n).toString().padStart(6, "0").replace(/0+$/, "");
   return `${whole.toString()}${fraction ? `.${fraction}` : ""}`;
+}
+
+function operatorSettlementPreflight(round: rounds.Round, winner?: rounds.DriverSlot) {
+  const blockers: string[] = [];
+  const warnings: string[] = [];
+  const driverEntries = (["challenger", "opponent"] as const).map((slot) => {
+    const driver = round.drivers[slot];
+    const fee = driver?.feePayment;
+    if (!driver?.wallet) {
+      blockers.push(`missing ${slot} wallet`);
+    }
+    if (!driver?.feePaid || fee?.status !== "paid") {
+      blockers.push(`${slot} x402 fee is not paid`);
+    } else if (fee?.source !== "x402") {
+      blockers.push(`${slot} x402 fee receipt is missing`);
+    }
+    if (!driver?.stakeAuthorized) blockers.push(`${slot} stake is not authorized`);
+    if (!driver?.chainJoined) blockers.push(`${slot} has not joined on-chain`);
+    return [slot, {
+      wallet: driver?.wallet || null,
+      displayName: driver?.displayName || null,
+      robot: driver?.robot || null,
+      lane: driver?.lane || null,
+      feePaid: Boolean(driver?.feePaid),
+      feeStatus: fee?.status ?? "unpaid",
+      feeSource: fee?.source ?? null,
+      feePaymentId: fee?.paymentId ?? null,
+      feeTxHash: fee?.txHash ?? null,
+      feeReconciliationStatus: fee?.reconciliationStatus ?? null,
+      stakeAuthorized: Boolean(driver?.stakeAuthorized),
+      stakeAdapter: driver?.stakeAuthorization?.adapter ?? null,
+      chainJoined: Boolean(driver?.chainJoined),
+      joinedTx: driver?.joinedTx ?? null,
+    }];
+  });
+
+  if (winner) {
+    const currentWinner = round.winner;
+    if (!round.drivers[winner]?.wallet) blockers.push(`missing ${winner} driver`);
+    if (currentWinner && currentWinner !== winner) {
+      blockers.push(`round already finished with ${currentWinner}`);
+    }
+  } else if (!round.winner && round.status !== "racing") {
+    blockers.push("winner required");
+  }
+
+  if (!round.chainRaceId) blockers.push("round is not opened on-chain");
+  if (round.status !== "racing" && round.status !== "finished" && round.status !== "settled") {
+    blockers.push(`round must be racing or finished, got ${round.status}`);
+  }
+  if (round.chainStatus !== "started" && round.chainStatus !== "finished" && round.chainStatus !== "settled") {
+    blockers.push(`chain race must be started or finished, got ${round.chainStatus ?? "unknown"}`);
+  }
+  if (round.status === "settled" || round.chainStatus === "settled") {
+    warnings.push("round is already settled");
+  }
+
+  const drivers = Object.fromEntries(driverEntries);
+  return {
+    roundId: round.id,
+    status: round.status,
+    chainStatus: round.chainStatus ?? null,
+    chainRaceId: round.chainRaceId ?? null,
+    winner: winner ?? round.winner ?? null,
+    canSettle: blockers.length === 0,
+    blockers,
+    warnings,
+    drivers,
+    x402Receipts: Object.fromEntries((["challenger", "opponent"] as const).map((slot) => {
+      const fee = round.drivers[slot]?.feePayment;
+      return [slot, fee?.source === "x402" ? {
+        status: fee.status,
+        paymentId: fee.paymentId ?? null,
+        txHash: fee.txHash ?? null,
+        payer: fee.payer ?? null,
+        amountUsdc: fee.amountUsdc,
+        reconciliationStatus: fee.reconciliationStatus ?? null,
+      } : null];
+    })),
+    txHashes: round.txHashes ?? {},
+    proofHash: round.proofHash ?? null,
+    evidenceHash: round.evidenceHash ?? null,
+  };
+}
+
+async function settleOperatorWinner(
+  roundId: string,
+  winner: rounds.DriverSlot,
+  proof?: Record<string, unknown>,
+) {
+  let round = rounds.getRound(roundId);
+  const preflight = operatorSettlementPreflight(round, winner);
+  if (!preflight.canSettle) {
+    throw new Error(preflight.blockers.join("; "));
+  }
+
+  const actions: Array<Record<string, unknown>> = [];
+  if (round.status === "settled" && round.chainStatus === "settled") {
+    actions.push({ type: "skip-settle", reason: "already settled" });
+    const hashes = evidence.getEvidenceHash(round);
+    return {
+      round,
+      preflight,
+      actions,
+      proofHash: hashes.proofHash,
+      evidenceHash: hashes.evidenceHash,
+    };
+  }
+
+  if (round.status === "racing") {
+    round = await finishRoundWithEvidence(roundId, winner, operatorSettlementProof(round, winner, proof));
+    actions.push({ type: "finish-local", winner });
+  } else if (round.status === "finished") {
+    if (round.winner !== winner) throw new Error(`round already finished with ${round.winner}`);
+    const beforeProofHash = round.proofHash;
+    round = ensureResultEvidence(round);
+    if (!beforeProofHash && round.proofHash) actions.push({ type: "finalize-evidence", proofHash: round.proofHash });
+  } else {
+    throw new Error(`round must be racing or finished, got ${round.status}`);
+  }
+
+  if (round.chainStatus === "started") {
+    round = ensureResultEvidence(round);
+    const finished = await chain.finishRoundOnChain(round);
+    round = rounds.markChainFinished(roundId, finished.tx);
+    actions.push({ type: "finish-chain", tx: finished.tx });
+  } else if (round.chainStatus === "finished") {
+    actions.push({ type: "skip-finish-chain", reason: "already finished on-chain" });
+  } else if (round.chainStatus !== "settled") {
+    throw new Error(`chain race must be started or finished, got ${round.chainStatus ?? "unknown"}`);
+  }
+
+  if (round.chainStatus === "finished") {
+    const settled = await chain.settleRoundOnChain(round);
+    round = rounds.markChainSettled(roundId, settled.tx);
+    evidence.recordRoundSnapshot(round, "settled");
+    actions.push({ type: "settle-chain", tx: settled.tx });
+  } else if (round.chainStatus === "settled") {
+    actions.push({ type: "skip-settle-chain", reason: "already settled on-chain" });
+  }
+
+  const hashes = evidence.getEvidenceHash(round);
+  round = rounds.markEvidenceHashes(roundId, hashes.proofHash, hashes.evidenceHash);
+  return {
+    round,
+    preflight: operatorSettlementPreflight(round, winner),
+    actions,
+    proofHash: hashes.proofHash,
+    evidenceHash: hashes.evidenceHash,
+  };
+}
+
+function operatorSettlementProof(
+  round: rounds.Round,
+  winner: rounds.DriverSlot,
+  proof?: Record<string, unknown>,
+): Record<string, unknown> {
+  return {
+    source: "operator",
+    method: "winner-settlement-button",
+    winner,
+    operatorActionId: randomActionId(round.id, winner),
+    submittedAtMs: Date.now(),
+    telemetryTraceId: `trace-${round.id}`,
+    ...(proof && typeof proof === "object" ? proof : {}),
+  };
+}
+
+function randomActionId(roundId: string, winner: rounds.DriverSlot): string {
+  return `${roundId}-${winner}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
 function ensureResultEvidence(round: rounds.Round): rounds.Round {

@@ -250,7 +250,7 @@ export async function buildRaceEntryRequest(round: Round, slot: DriverSlot, wall
       chainId: cfg.chainId,
       chainIdHex: `0x${cfg.chainId.toString(16)}`,
       rpcUrl: cfg.publicRpcUrl,
-      name: "Rover Local",
+      name: "Clanker500 Local",
       nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
     },
     slot,
@@ -413,7 +413,7 @@ function localChain() {
   const cfg = localChainConfig();
   return defineChain({
     id: cfg.chainId,
-    name: "Rover Local",
+    name: "Clanker500 Local",
     nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
     rpcUrls: { default: { http: [cfg.rpcUrl] } },
   });

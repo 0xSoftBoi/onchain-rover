@@ -1,5 +1,5 @@
 /**
- * Rover GP — pay-to-pilot sessions + parimutuel race betting (Act 2).
+ * Clanker500 GP — pay-to-pilot sessions + parimutuel race betting (Act 2).
  *
  * SAFETY IS SERVER-SIDE: the gamepad client is untrusted. This module clamps
  * speed, enforces session expiry, and rate-limits drive commands before

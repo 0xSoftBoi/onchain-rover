@@ -456,15 +456,19 @@ export function markChainJoined(
   const driver = requireDriver(round, slot);
   const paidAt = Date.now();
   driver.chainJoined = true;
-  driver.feePaid = true;
-  driver.feePayment = {
-    status: "paid",
-    source: "local-chain",
-    amountUsdc: round.feeUsdc,
-    txHash,
-    paidAt,
-    reconciliationStatus: "reconciled",
-  };
+  if (driver.feePayment?.source === "x402") {
+    driver.feePaid = driver.feePayment.status === "paid";
+  } else {
+    driver.feePaid = true;
+    driver.feePayment = {
+      status: "paid",
+      source: "local-chain",
+      amountUsdc: round.feeUsdc,
+      txHash,
+      paidAt,
+      reconciliationStatus: "reconciled",
+    };
+  }
   driver.stakeAuthorized = true;
   driver.stakeAuthorization = {
     adapter: "local-chain-escrow",

@@ -130,6 +130,7 @@ const providedToken = params.get("token");
 const forceLocalCamera = params.get("camera") === "local";
 const manualMode = params.get("mode") === "manual";
 const roundId = manualMode ? null : params.get("round");
+const x402OnlyEntry = params.get("entry") === "x402" || params.get("show") === "1";
 const driverSlot = parseDriverSlot(params.get("slot")) || "challenger";
 const requestedSpeedMode = parseSpeedMode(params.get("speed"));
 let speedMode: SpeedMode = manualMode
@@ -361,7 +362,14 @@ async function connect() {
     pilotStarting = false;
   } catch (err) {
     pilotStarting = false;
-    setConn("down", err instanceof Error ? err.message : "connection failed");
+    const message = err instanceof Error ? err.message : "connection failed";
+    setConn("down", message);
+    if (roundId && isRaceWaitError(message)) {
+      setConn("connecting", "waiting for race start");
+      setModalStatus(message.includes("round must be locked") ? "Waiting for second driver..." : "Waiting for countdown...");
+      reconnectTimer = window.setTimeout(connect, 1200);
+      return;
+    }
     if (hasConnected) {
       reconnectTimer = window.setTimeout(connect, 1800);
     } else {
@@ -387,6 +395,43 @@ async function completeRaceEntryIfNeeded() {
     wallet: session.address,
     displayName: walletDisplayName(session),
   });
+
+  setModalStatus("Paying race fee...");
+  try {
+    await signer.payRaceFee(session, {
+      roundId,
+      slot: driverSlot,
+      displayName: walletDisplayName(session),
+    });
+  } catch (err) {
+    if (!x402OnlyEntry) throw err;
+    setModalStatus("Recording Arc entry...");
+    await postJson(`/race/round/${roundId}/show-enter`, {
+      slot: driverSlot,
+      wallet: session.address,
+      displayName: walletDisplayName(session),
+      reason: err instanceof Error ? err.message : "x402 pending",
+    });
+    raceEntryComplete = true;
+    setModalStatus("Entry confirmed. Waiting for countdown...", "ok");
+    return;
+  }
+
+  if (x402OnlyEntry) {
+    setModalStatus("Confirming race entry...");
+    await postJson(`/race/round/${roundId}/stake-authorize`, {
+      slot: driverSlot,
+      authorization: {
+        adapter: "manual",
+        status: "verified",
+        source: "show-x402-entry",
+        amountUsdc: "0",
+      },
+    });
+    raceEntryComplete = true;
+    setModalStatus("Entry confirmed. Waiting for countdown...", "ok");
+    return;
+  }
 
   setModalStatus("Authorizing matched stake...");
   await signer.authorizeStake(session, {
@@ -419,6 +464,12 @@ async function completeRaceEntryIfNeeded() {
   });
   raceEntryComplete = true;
   setModalStatus("Race entry confirmed", "ok");
+}
+
+function isRaceWaitError(message: string): boolean {
+  return message.includes("round must be locked before pilot delegation")
+    || message.includes("countdown has not been scheduled")
+    || message.includes("round has not started");
 }
 
 async function useExistingRaceEntryIfReady(): Promise<boolean> {
@@ -1218,7 +1269,7 @@ els.robotName.textContent = `/ ${robotName}`;
 renderRoundState();
 if (manualMode) {
   els.modalTitle.textContent = "Start Manual Drive";
-  els.modalCopy.textContent = "Connect to the rover camera and unlock direct low-speed control.";
+  els.modalCopy.textContent = "Connect to the Clanker500 camera and unlock direct low-speed control.";
   setModalStatus("Manual mode bypasses race timing");
   els.direction.textContent = "Tap start";
   els.raceTimer.textContent = "manual";

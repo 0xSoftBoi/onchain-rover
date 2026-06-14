@@ -12,7 +12,8 @@ import { LOCAL_ACCOUNTS, LOCAL_KEYS } from "./accounts.js";
 import { deploymentPath, readArtifact, sidecarExportPath } from "./artifacts.js";
 
 const rpcUrl = process.env.LOCAL_CHAIN_RPC_URL ?? "http://127.0.0.1:8545";
-const publicRpcUrl = process.env.PUBLIC_LOCAL_CHAIN_RPC_URL ?? rpcUrl;
+const exportRpcUrl = process.env.LOCAL_CHAIN_EXPORT_RPC_URL ?? rpcUrl;
+const publicRpcUrl = process.env.PUBLIC_LOCAL_CHAIN_RPC_URL ?? exportRpcUrl;
 const chainId = Number(process.env.LOCAL_CHAIN_ID ?? 31337);
 
 const localChain = defineChain({
@@ -73,7 +74,7 @@ async function main() {
 
   const deployment = {
     chainId,
-    rpcUrl,
+    rpcUrl: exportRpcUrl,
     publicRpcUrl,
     deployedAt: new Date().toISOString(),
     accounts: {

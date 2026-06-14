@@ -66,6 +66,32 @@ The reset script:
   `/ws/telemetry`
 - sends a final `/motors/stop`
 
+## Stage WiFi Boot Profile
+
+The robots should boot onto the stage router, not whichever saved hotspot was
+last used during recovery. Configure the saved NetworkManager profile once:
+
+```bash
+./robot-harness/deploy/configure-stage-wifi.sh \
+  --ssid TP-Link_A768 \
+  --disable AccessPopup \
+  --activate \
+  --install-retry-service
+```
+
+If the `TP-Link_A768` connection does not exist yet, create it without putting
+the password in shell history or the repo:
+
+```bash
+read -r -s ROVER_WIFI_PASSWORD
+export ROVER_WIFI_PASSWORD
+./robot-harness/deploy/configure-stage-wifi.sh --ssid TP-Link_A768 --activate --install-retry-service
+unset ROVER_WIFI_PASSWORD
+```
+
+The retry service stores only the SSID/interface in `/etc/default/onchain-rover-wifi`.
+The WiFi secret remains in NetworkManager's saved connection.
+
 ## Deploy Checker
 
 Use the standalone Rust checker from the laptop to prove each bot is deployed as
@@ -141,6 +167,10 @@ ROVER_SERIAL_BAUD=115200
 ROVER_DRIVE_INVERT=true
 ROVER_DRIVE_SWAP=false
 ROVER_CAMERA_DEVICE=/dev/video0
+ROVER_CAMERA_SIZE=320x240
+ROVER_CAMERA_FPS=30
+ROVER_CAMERA_OUTPUT_FPS=12
+ROVER_CAMERA_JPEG_QUALITY=8
 ROVER_LIDAR_ENABLED=true
 ROVER_LIDAR_PORT=/dev/ttyACM0
 ROVER_LIDAR_BAUD=230400
@@ -152,6 +182,22 @@ profile values:
 
 ```bash
 ./robot-harness/deploy/jetson-install.sh --role courier --disable-lidar --force-env --start
+```
+
+For the courier control camera, prefer the tuned MJPEG output profile. The
+camera still captures `320x240`, but ffmpeg outputs a lower-bandwidth stream for
+driving:
+
+```bash
+./robot-harness/deploy/reset-good-state.sh \
+  --role courier \
+  --sidecar-url http://192.168.0.184:4021 \
+  --profile wifi \
+  --camera-device /dev/video0 \
+  --camera-size 320x240 \
+  --camera-fps 30 \
+  --camera-output-fps 12 \
+  --camera-jpeg-quality 8
 ```
 
 ## Service Commands
@@ -213,12 +259,46 @@ From the laptop, replace `127.0.0.1` with the robot LAN IP:
 curl -s http://192.168.8.71:8000/health | python3 -m json.tool
 ```
 
+## Capture a Known-Good Flash Image
+
+After a robot is proven healthy, power it down and image its boot media from the
+laptop. Do this from a removed microSD/NVMe/USB boot disk through a reader. Do
+not image a live mounted Jetson filesystem over SSH.
+
+On macOS, identify the whole disk:
+
+```bash
+diskutil list
+```
+
+Capture a compressed image plus checksum and manifest:
+
+```bash
+./robot-harness/deploy/capture-jetson-image.sh \
+  --role courier \
+  --device /dev/rdiskN \
+  --output ./images/courier-good.img.gz
+```
+
+Restore later with an explicit destructive confirmation:
+
+```bash
+./robot-harness/deploy/restore-jetson-image.sh \
+  --image ./images/courier-good.img.gz \
+  --device /dev/rdiskN \
+  --yes-erase-device
+```
+
+Use the whole disk device (`/dev/rdiskN` on macOS or `/dev/sdX` on Linux), not a
+partition like `/dev/rdiskNs1`. Keep separate images for `guard` and `courier`
+because role env, WiFi profiles, and camera tuning can differ.
+
 ## Recovery
 
 Stop old Python or Waveshare owners without rebooting:
 
 ```bash
-LEGACY_ROBOT_PATTERN='[p]ython.*(app.py|read_serial|capture|voice)|[u]vicorn.*api:app|[c]apture_images'
+LEGACY_ROBOT_PATTERN='[p]ython.*(app.py|api:app|read_serial|capture_images|voice)|[u]vicorn.*api:app'
 pgrep -af "$LEGACY_ROBOT_PATTERN"
 pgrep -f "$LEGACY_ROBOT_PATTERN" | xargs -r kill
 ```

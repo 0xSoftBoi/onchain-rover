@@ -1,4 +1,5 @@
-import { getAddress } from "viem";
+import { x402Client, x402HTTPClient } from "@x402/core/client";
+import { getAddress, type Address, type Hex } from "viem";
 
 export type EthereumProvider = {
   request(args: { method: string; params?: unknown[] | Record<string, unknown> }): Promise<unknown>;
@@ -62,6 +63,31 @@ export type RaceFeeInput = {
   roundId: string;
   slot: DriverSlot;
   displayName?: string;
+};
+
+type BatchPaymentRequirements = {
+  scheme: string;
+  network: string;
+  asset: string;
+  amount: string;
+  payTo: string;
+  maxTimeoutSeconds: number;
+  extra?: Record<string, unknown>;
+};
+
+type BatchEvmSigner = {
+  address: Address;
+  signTypedData(params: {
+    domain: {
+      name: string;
+      version: string;
+      chainId: number;
+      verifyingContract: Address;
+    };
+    types: Record<string, Array<{ name: string; type: string }>>;
+    primaryType: string;
+    message: Record<string, unknown>;
+  }): Promise<Hex>;
 };
 
 export type WalletSigner = {
@@ -176,8 +202,37 @@ export function createWalletSigner(options: WalletSignerOptions = {}): WalletSig
       });
     },
 
-    async payRaceFee(_session, _input) {
-      throw new Error(`${label} x402 fee payment requires a browser-safe payment adapter`);
+    async payRaceFee(session, input) {
+      const body = {
+        slot: input.slot,
+        wallet: session.address,
+        displayName: input.displayName ?? walletDisplayName(session),
+      };
+      const url = `/race/round/${encodeURIComponent(input.roundId)}/join`;
+      const first = await postJsonResponse(url, body);
+      if (first.res.ok) return first.json;
+      if (first.res.status !== 402) {
+        throw new Error(errorMessage(first.json) || `race fee request failed ${first.res.status}`);
+      }
+
+      const httpClient = createX402HttpClient(session, signTypedData);
+      const paymentRequired = httpClient.getPaymentRequiredResponse(
+        (name) => first.res.headers.get(name),
+        first.json,
+      );
+      const paymentPayload = await httpClient.createPaymentPayload(paymentRequired);
+      const paid = await postJsonResponse(url, body, httpClient.encodePaymentSignatureHeader(paymentPayload));
+      if (!paid.res.ok || errorMessage(paid.json)) {
+        throw new Error(errorMessage(paid.json) || `paid race fee request failed ${paid.res.status}`);
+      }
+
+      let settlement: unknown;
+      try {
+        settlement = httpClient.getPaymentSettleResponse((name) => paid.res.headers.get(name));
+      } catch {
+        settlement = undefined;
+      }
+      return settlement ? { ...(paid.json as Record<string, unknown>), settlement } : paid.json;
     },
   };
 }
@@ -227,16 +282,91 @@ async function currentChainId(provider: EthereumProvider): Promise<number | unde
 }
 
 async function postJson(url: string, body: unknown): Promise<unknown> {
+  const { res, json } = await postJsonResponse(url, body);
+  if (!res.ok || errorMessage(json)) {
+    throw new Error(errorMessage(json) || `request failed ${res.status}`);
+  }
+  return json;
+}
+
+async function postJsonResponse(
+  url: string,
+  body: unknown,
+  headers: Record<string, string> = {},
+): Promise<{ res: Response; json: unknown }> {
   const res = await fetch(url, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...headers },
     body: JSON.stringify(body),
   });
   const json = await res.json().catch(() => ({}));
-  if (!res.ok || (json as { error?: string }).error) {
-    throw new Error((json as { error?: string }).error || `request failed ${res.status}`);
+  return { res, json };
+}
+
+function createX402HttpClient(
+  session: WalletSession,
+  signTypedData: (session: WalletSession, data: TypedDataEnvelope) => Promise<string>,
+): x402HTTPClient {
+  const signer: BatchEvmSigner = {
+    address: getAddress(session.address),
+    signTypedData: async (params) => signTypedData(session, {
+      domain: params.domain,
+      types: params.types,
+      primaryType: params.primaryType,
+      message: params.message,
+    }) as Promise<Hex>,
+  };
+  const client = new x402Client((_version, requirements) => {
+    const gatewayOption = requirements.find(isCircleBatchingRequirement);
+    return gatewayOption ?? requirements[0];
+  });
+  client.register("eip155:*", new BrowserBatchEvmScheme(signer));
+  return new x402HTTPClient(client);
+}
+
+class BrowserBatchEvmScheme {
+  readonly scheme = "exact";
+
+  constructor(private readonly signer: BatchEvmSigner) {}
+
+  async createPaymentPayload(x402Version: number, paymentRequirements: BatchPaymentRequirements) {
+    if (!isCircleBatchingRequirement(paymentRequirements)) {
+      throw new Error("x402 race fees require Circle Gateway batching payment requirements");
+    }
+    const verifyingContract = stringValue(paymentRequirements.extra?.verifyingContract);
+    if (!verifyingContract) throw new Error("x402 payment requirements missing Gateway verifying contract");
+    const now = Math.floor(Date.now() / 1000);
+    const validWindowSecs = Math.max(paymentRequirements.maxTimeoutSeconds, 7 * 24 * 60 * 60 + 100);
+    const authorization = {
+      from: this.signer.address,
+      to: getAddress(paymentRequirements.payTo),
+      value: paymentRequirements.amount,
+      validAfter: String(now - 600),
+      validBefore: String(now + validWindowSecs),
+      nonce: randomHex32(),
+    };
+    const signature = await this.signer.signTypedData({
+      domain: {
+        name: "GatewayWalletBatched",
+        version: "1",
+        chainId: chainIdFromNetwork(paymentRequirements.network),
+        verifyingContract: getAddress(verifyingContract),
+      },
+      types: {
+        TransferWithAuthorization: [
+          { name: "from", type: "address" },
+          { name: "to", type: "address" },
+          { name: "value", type: "uint256" },
+          { name: "validAfter", type: "uint256" },
+          { name: "validBefore", type: "uint256" },
+          { name: "nonce", type: "bytes32" },
+        ],
+      },
+      primaryType: "TransferWithAuthorization",
+      message: authorization,
+    });
+    return { x402Version, payload: { authorization, signature } };
   }
-  return json;
 }
 
 function shortenAddress(address: string): string {
@@ -245,4 +375,29 @@ function shortenAddress(address: string): string {
 
 function stringValue(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
+}
+
+function errorMessage(value: unknown): string | undefined {
+  return typeof value === "object" && value && "error" in value
+    ? stringValue((value as { error?: unknown }).error)
+    : undefined;
+}
+
+function isCircleBatchingRequirement(value: BatchPaymentRequirements): boolean {
+  return value.scheme === "exact" &&
+    value.network.startsWith("eip155:") &&
+    value.extra?.name === "GatewayWalletBatched" &&
+    value.extra?.version === "1";
+}
+
+function chainIdFromNetwork(network: string): number {
+  const match = /^eip155:(\d+)$/.exec(network);
+  if (!match) throw new Error(`unsupported x402 network ${network}`);
+  return Number(match[1]);
+}
+
+function randomHex32(): Hex {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  return `0x${Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("")}` as Hex;
 }

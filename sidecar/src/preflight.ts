@@ -88,7 +88,7 @@ async function main() {
   check("Ledger owner set", !!process.env.LEDGER_ADDRESS, process.env.LEDGER_ADDRESS ?? "LEDGER_ADDRESS unset (Treasury owner=guard fallback)");
 
   // print board
-  console.log("\n  THE ONCHAIN ROVER — PRE-FLIGHT\n  " + "─".repeat(46));
+  console.log("\n  CLANKER500 — PRE-FLIGHT\n  " + "─".repeat(46));
   for (const r of rows) console.log(`  ${ok(r.ok)} ${r.label.padEnd(26)} ${r.detail}`);
   const blockers = rows.filter((r) => !r.ok).length;
   console.log("  " + "─".repeat(46));

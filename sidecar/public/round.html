@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Rover GP Round Harness</title>
+<title>Clanker500 GP Round Harness</title>
 <style>
   :root {
     --bg:#090c10; --panel:#111822; --panel2:#151f2b; --line:#273342;
@@ -97,7 +97,7 @@
 <body>
 <header>
   <div>
-    <h1>Rover GP Round Harness</h1>
+    <h1>Clanker500 GP Round Harness</h1>
     <div class="sub">two phones enter · local chain locks stakes · winner settles · treasury collects the race fee</div>
   </div>
   <div class="pill" id="chainPill">chain unknown</div>
@@ -298,7 +298,28 @@
       <button id="settle" class="good">Settle</button>
       <button id="cancel" class="bad">Cancel</button>
     </div>
-    <div class="sub" style="margin-top:8px">Local Sim Lock requires <code>ALLOW_FREE_PILOT=1</code>. Use Authorize Robots when the rover APIs are live.</div>
+    <div class="sub" style="margin-top:8px">Local Sim Lock requires <code>ALLOW_FREE_PILOT=1</code>. Use Authorize Robots when the Clanker500 APIs are live.</div>
+  </section>
+
+  <section>
+    <h2>Winner Settlement</h2>
+    <div class="grid3">
+      <label>Winner
+        <select id="operatorWinner">
+          <option value="challenger">challenger</option>
+          <option value="opponent">opponent</option>
+        </select>
+      </label>
+      <div>
+        <div class="kv"><span class="k">preflight</span><span class="v" id="settlementPreflight">-</span></div>
+        <div class="kv"><span class="k">settlement tx</span><span class="v" id="settlementTx">-</span></div>
+      </div>
+      <div class="actions">
+        <button id="settleWinner" class="good">Settle Selected Winner</button>
+      </div>
+    </div>
+    <div class="history" id="settlementDrivers" style="margin-top:10px"></div>
+    <div class="log" id="settlementActions" style="margin-top:10px; min-height:70px"></div>
   </section>
 
   <section>
@@ -320,7 +341,7 @@
 <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.4/build/qrcode.min.js"></script>
 <script>
 const $ = (id) => document.getElementById(id);
-const state = { round: null, chain: null, treasury: null, evidence: null, detections: [], rounds: [], replay: null, trace: null };
+const state = { round: null, chain: null, treasury: null, evidence: null, detections: [], rounds: [], replay: null, trace: null, operatorPreflight: null };
 let calibrationDirty = false;
 const localDefaults = {
   challenger: "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
@@ -409,6 +430,62 @@ function settlementSummary(round) {
   return `${settlement.status} · ${settlement.reason || "-"}`;
 }
 
+function currentOperatorWinner() {
+  const selected = $("operatorWinner")?.value;
+  if (selected === "challenger" || selected === "opponent") return selected;
+  return state.round?.winner || "challenger";
+}
+
+function receiptSummary(driver) {
+  const fee = driver?.feePayment;
+  if (!fee) return "no fee";
+  const tx = fee.txHash || fee.paymentId || "";
+  return `${fee.source || "fee"}:${fee.status || "unknown"}${tx ? ` ${String(tx).slice(0, 10)}...` : ""}`;
+}
+
+function renderOperatorSettlement() {
+  const preflight = state.operatorPreflight;
+  const selectedWinner = currentOperatorWinner();
+  if (state.round?.winner && $("operatorWinner").value !== state.round.winner) {
+    $("operatorWinner").value = state.round.winner;
+  }
+  if (!state.round?.id) {
+    $("settlementPreflight").textContent = "create a round first";
+    $("settlementPreflight").className = "v";
+    $("settlementTx").textContent = "-";
+    $("settlementDrivers").textContent = "";
+    $("settlementActions").textContent = "";
+    $("settleWinner").disabled = true;
+    return;
+  }
+  const blockers = preflight?.blockers || [];
+  const warnings = preflight?.warnings || [];
+  $("settlementPreflight").textContent = blockers.length
+    ? blockers.join(" · ")
+    : warnings.length
+      ? warnings.join(" · ")
+      : `ready for ${selectedWinner}`;
+  $("settlementPreflight").className = `v ${blockers.length ? "badText" : "ok"}`;
+  $("settlementTx").textContent = state.round?.txHashes?.settle || "-";
+  $("settleWinner").disabled = !preflight?.canSettle;
+
+  const drivers = state.round.drivers || {};
+  $("settlementDrivers").innerHTML = ["challenger", "opponent"].map((slot) => {
+    const driver = drivers[slot] || {};
+    const pre = preflight?.drivers?.[slot] || {};
+    const bits = [
+      receiptSummary(driver),
+      pre.stakeAuthorized ? "stake:yes" : "stake:no",
+      pre.chainJoined ? "chain:yes" : "chain:no",
+    ].join(" · ");
+    return `<div class="history-row">
+      <span>${slot}${slot === selectedWinner ? " / selected" : ""}</span>
+      <span>${driver.wallet || "-"}</span>
+      <span>${bits}</span>
+    </div>`;
+  }).join("");
+}
+
 function telemetryTraceSummary(round) {
   const trace = state.trace?.traceId || round?.telemetryTraceId || round?.proof?.telemetryTraceId;
   if (!trace) return "-";
@@ -460,6 +537,7 @@ function render() {
   renderHistory();
   renderReplay();
   renderCalibration(calibration);
+  renderOperatorSettlement();
 }
 
 async function refresh() {
@@ -485,11 +563,14 @@ async function refresh() {
       state.detections = finishDetections?.detections || [];
       state.replay = await getJson(`/race/round/${state.round.id}/evidence`).catch(() => null);
       state.trace = await getJson(`/race/round/${state.round.id}/telemetry-trace`).catch(() => null);
+      state.operatorPreflight = await getJson(`/race/round/${state.round.id}/operator/settlement-preflight?winner=${encodeURIComponent(currentOperatorWinner())}`)
+        .catch((err) => ({ canSettle: false, blockers: [err.message], warnings: [] }));
     } else {
       state.evidence = null;
       state.detections = [];
       state.replay = null;
       state.trace = null;
+      state.operatorPreflight = null;
     }
     render();
   } catch (err) {
@@ -824,6 +905,36 @@ async function step(label, fn) {
   }
 }
 
+async function settleSelectedWinner() {
+  if (!state.round?.id) {
+    log("settlement failed: create or load a round first");
+    return;
+  }
+  const winner = currentOperatorWinner();
+  if (!confirm(`Settle ${winner} as winner? This submits the round settlement transaction.`)) return;
+  try {
+    $("settleWinner").disabled = true;
+    $("settlementActions").textContent = `[${new Date().toLocaleTimeString()}] submitting ${winner} settlement...\n` + $("settlementActions").textContent;
+    const result = await postJson(`/race/round/${state.round.id}/operator/settle-winner`, {
+      winner,
+      proof: operatorFinishProof(winner),
+    });
+    state.round = result.round;
+    state.operatorPreflight = result.preflight;
+    const actions = (result.actions || []).map((action) => {
+      const tx = action.tx ? ` ${String(action.tx).slice(0, 12)}...` : "";
+      const reason = action.reason ? ` (${action.reason})` : "";
+      return `${action.type}${tx}${reason}`;
+    }).join("\n") || "no-op";
+    $("settlementActions").textContent = `[${new Date().toLocaleTimeString()}] ${winner} settled\n${actions}\n` + $("settlementActions").textContent;
+    await refresh();
+  } catch (err) {
+    $("settlementActions").textContent = `[${new Date().toLocaleTimeString()}] settlement failed: ${err.message}\n` + $("settlementActions").textContent;
+    log(`settlement failed: ${err.message}`);
+    await refresh();
+  }
+}
+
 $("create").onclick = () => step("created round", createRound);
 $("openChain").onclick = () => step("opened escrow", () => postJson(`/race/round/${state.round.id}/chain/open`));
 $("fillLocal").onclick = () => {
@@ -865,6 +976,7 @@ $("detectOpponent").onclick = () => step("opponent finish detected", async () =>
 });
 $("chainStart").onclick = () => step("on-chain race started", () => postJson(`/race/round/${state.round.id}/chain/start`));
 $("settle").onclick = () => step("settled race", () => postJson(`/race/round/${state.round.id}/chain/settle`));
+$("settleWinner").onclick = settleSelectedWinner;
 $("cancel").onclick = () => step("canceled race", () => {
   const path = state.round.chainRaceId
     ? `/race/round/${state.round.id}/chain/cancel`
@@ -873,6 +985,7 @@ $("cancel").onclick = () => step("canceled race", () => {
 });
 $("refresh").onclick = refresh;
 $("publicSidecar").addEventListener("input", render);
+$("operatorWinner").addEventListener("change", refresh);
 document.querySelectorAll("[data-calibration]").forEach((field) => {
   field.addEventListener("input", () => { calibrationDirty = true; });
   field.addEventListener("change", () => { calibrationDirty = true; });

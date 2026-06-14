@@ -18,6 +18,7 @@ Blink (instant wallets & on-ramp).
 
 **Jump to:** [What's real (not mocked)](#whats-real-not-mocked) ·
 [Deployed addresses](#deployed--live-verified-on-chain) ·
+[Show runbook](#show-runbook) ·
 [Run with no hardware](#no-robot-no-gpu-run-the-whole-loop-anyway)
 
 ### Links & meta
@@ -45,11 +46,119 @@ Blink (instant wallets & on-ramp).
   auction** to negotiate the pass price → pay + mint on Arc → admitted → proof to
   Walrus → reputation ticks up.
 - **Race day — The Clanker 500:** spectators **pay to pilot** the rovers ($1 x402
-  sessions, WebSocket joystick + deadman) and **bet USDC** on a fruit-obstacle drag
-  race (parimutuel, **one bet per human via real World ID**), settled on-chain by the
-  guard robot's Walrus-anchored finish photo.
+  sessions, WebRTC joystick with WebSocket fallback + deadman) and **bet USDC** on a
+  fruit-obstacle drag race (parimutuel, **one bet per human via real World ID**),
+  settled on-chain by the guard robot's Walrus-anchored finish photo.
 - **Parc Fermé (the climax):** withdrawing the fleet's earnings **blocks** until a
   human clear-signs on a **Ledger** (ERC-7730: "Withdraw N USDC → recipient").
+
+## Show runbook
+
+For a live booth run, keep the sidecar on the laptop and expose only the sidecar's
+public URL. The QR links point players at round entry; the operator keeps a separate
+settlement control page and never has to expose raw robot URLs.
+
+```bash
+cp .env.compose.example .env.compose
+docker compose --env-file .env.compose up --detach --wait
+```
+
+Set `COMPOSE_PUBLIC_SIDECAR_URL` to the tunnel URL before printing QR codes. Keep
+`COMPOSE_ALLOW_FREE_PILOT=0` for public play, use `COMPOSE_ALLOW_ROUND_PILOT=1` for
+paid round control, and set `COMPOSE_ALLOW_SHOW_RACE_AUTOSTART=1` when the first two
+confirmed players should trigger the countdown automatically. The local fallback flag
+`COMPOSE_ALLOW_SHOW_X402_FALLBACK=1` is for rehearsals only; leave it off when Arc
+testnet settlement is the source of truth.
+
+Key booth URLs:
+- Operator wall: `<public-sidecar-url>/round.html`
+- Guard entry: `<public-sidecar-url>/round.html?robot=guard&entry=x402`
+- Courier entry: `<public-sidecar-url>/round.html?robot=courier&entry=x402`
+- Manual pilot: `<public-sidecar-url>/pilot-react.html?robot=guard&mode=manual&transport=webrtc&speed=high`
+- Preflight: `<public-sidecar-url>/field.html`
+
+### Live show topology
+
+```mermaid
+flowchart LR
+    subgraph PUBLIC["Public network"]
+      P1["Player phone<br/>guard QR"]
+      P2["Player phone<br/>courier QR"]
+      W["Spectator wall"]
+      X["x402 / Arc testnet<br/>USDC entry"]
+    end
+    subgraph LAPTOP["Booth laptop"]
+      T["Public tunnel<br/>COMPOSE_PUBLIC_SIDECAR_URL"]
+      S["Sidecar :4021<br/>rounds, x402, telemetry, WebRTC"]
+      C["Docker local chain<br/>rehearsal escrow"]
+    end
+    subgraph FIELD["Robot field"]
+      G["Guard Jetson<br/>Rust harness :8000"]
+      R["Courier Jetson<br/>Rust harness :8000"]
+      Cam["MJPEG cameras<br/>telemetry + odometry"]
+    end
+
+    P1 --> T
+    P2 --> T
+    W --> T
+    T --> S
+    S --> X
+    S --> C
+    S -->|WebRTC drive + HTTP stop| G
+    S -->|WebRTC drive + HTTP stop| R
+    G --> Cam --> S
+    R --> Cam
+```
+
+### Race lifecycle
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant O as Operator
+    participant S as Sidecar
+    participant A as Arc / x402
+    participant G as Guard driver
+    participant C as Courier driver
+    participant R as Robots
+    participant W as Wall
+
+    O->>S: create show round
+    G->>S: scan QR and enter as guard
+    C->>S: scan QR and enter as courier
+    S->>A: verify x402 payment
+    A-->>S: payment accepted
+    S->>W: show confirmed drivers
+    S->>S: lock first two drivers
+    S->>W: countdown
+    S-->>G: enable WebRTC control
+    S-->>C: enable WebRTC control
+    G->>R: drive guard
+    C->>R: drive courier
+    R-->>S: telemetry and odometry
+    S->>W: winner candidate
+    O->>S: settle winner
+    S->>A: settle race transactions
+    S->>W: final result
+```
+
+### Control and safety path
+
+```mermaid
+flowchart TB
+    J["Browser joystick"] --> D["WebRTC drive DataChannel<br/>unordered, maxRetransmits=0"]
+    J --> WS["WebSocket fallback"]
+    D --> H["Shared command handler"]
+    WS --> H
+    H --> V["Validate token, round, speed cap, and interval"]
+    V --> B["Robot bridge"]
+    B --> RH["Rust harness service on Jetson"]
+    RH --> M["Motor controller"]
+    H --> Last["lastCommand + telemetry broadcast"]
+    Stop["STOP button"] --> D
+    Stop --> Http["HTTP stop backup"]
+    Http --> B
+```
 
 ## Autonomy stack
 

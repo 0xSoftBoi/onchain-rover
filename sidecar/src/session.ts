@@ -2,7 +2,7 @@
  * Session authorization — the OPENING Ledger ceremony (bookends the withdraw).
  *
  * Before the robots do anything, a human operator clear-signs an EIP-712
- * "Authorize Onchain Rover fleet" message on their Ledger. It's GASLESS (a typed
+ * "Authorize Clanker500 fleet" message on their Ledger. It's GASLESS (a typed
  * message, not a tx) so it can't fail on gas/RPC mid-demo; the sidecar verifies
  * the signature and unlocks the show. Symmetric with the closing withdraw:
  * autonomous robots, human-held keys — human authority at both ends.
@@ -21,7 +21,7 @@ let state: State = { authorized: false };
 let issued: any = null; // the exact typed data we last handed out, to verify against
 
 export function authMessage(operator: string) {
-  const domain = { name: "Onchain Rover", version: "1", chainId: arcTestnet.id } as const;
+  const domain = { name: "Clanker500", version: "1", chainId: arcTestnet.id } as const;
   const types = {
     Authorization: [
       { name: "operator", type: "address" },

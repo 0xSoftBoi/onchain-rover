@@ -20,6 +20,10 @@ Options:
   --drive-invert                Flip motor polarity so positive commands drive forward.
   --drive-swap                  Swap left/right wheel commands before serial write.
   --camera-device PATH          V4L2 camera device. Default: /dev/video0.
+  --camera-size WxH             V4L2 capture size. Default: 320x240.
+  --camera-fps N                V4L2 capture fps request. Default: 30.
+  --camera-output-fps N         Optional output fps after ffmpeg re-encode.
+  --camera-jpeg-quality N       Optional MJPEG quality for re-encode, 2 best to 31 worst.
   --no-camera-device            Do not configure direct V4L2 camera capture.
   --camera-stream-url URL       Optional upstream MJPEG stream to proxy.
   --camera-snapshot-url URL     Optional upstream snapshot URL to proxy.
@@ -43,6 +47,10 @@ serial_port="${ROVER_SERIAL_PORT:-/dev/ttyTHS1}"
 drive_invert="${ROVER_DRIVE_INVERT:-false}"
 drive_swap="${ROVER_DRIVE_SWAP:-false}"
 camera_device="${ROVER_CAMERA_DEVICE:-/dev/video0}"
+camera_size="${ROVER_CAMERA_SIZE:-320x240}"
+camera_fps="${ROVER_CAMERA_FPS:-30}"
+camera_output_fps="${ROVER_CAMERA_OUTPUT_FPS:-}"
+camera_jpeg_quality="${ROVER_CAMERA_JPEG_QUALITY:-}"
 camera_stream_url="${ROVER_CAMERA_STREAM_URL:-}"
 camera_snapshot_url="${ROVER_CAMERA_SNAPSHOT_URL:-}"
 lidar_port="${ROVER_LIDAR_PORT:-/dev/ttyACM0}"
@@ -82,6 +90,22 @@ while [[ $# -gt 0 ]]; do
       ;;
     --camera-device)
       camera_device="${2:?--camera-device requires a path}"
+      shift 2
+      ;;
+    --camera-size)
+      camera_size="${2:?--camera-size requires WxH}"
+      shift 2
+      ;;
+    --camera-fps)
+      camera_fps="${2:?--camera-fps requires a number}"
+      shift 2
+      ;;
+    --camera-output-fps)
+      camera_output_fps="${2:?--camera-output-fps requires a number}"
+      shift 2
+      ;;
+    --camera-jpeg-quality)
+      camera_jpeg_quality="${2:?--camera-jpeg-quality requires a number}"
       shift 2
       ;;
     --no-camera-device)
@@ -169,7 +193,7 @@ echo "best-effort stop before changing owners"
 curl -fsS --max-time 3 -X POST http://127.0.0.1:8000/motors/stop >/dev/null 2>&1 || true
 curl -fsS --max-time 3 -X POST http://127.0.0.1:8000/stop >/dev/null 2>&1 || true
 
-legacy_pattern='[p]ython.*(app.py|api:app|read_serial|capture|voice)|[u]vicorn.*api:app|[c]apture_images'
+legacy_pattern='[p]ython.*(app.py|api:app|read_serial|capture_images|voice)|[u]vicorn.*api:app'
 if pgrep -af "$legacy_pattern" >/dev/null 2>&1; then
   echo "stopping legacy robot owners"
   pgrep -af "$legacy_pattern" || true
@@ -207,6 +231,13 @@ if [[ "$force_env" -eq 1 ]]; then
 fi
 if [[ -n "$camera_device" ]]; then
   install_args+=(--camera-device "$camera_device")
+fi
+install_args+=(--camera-size "$camera_size" --camera-fps "$camera_fps")
+if [[ -n "$camera_output_fps" ]]; then
+  install_args+=(--camera-output-fps "$camera_output_fps")
+fi
+if [[ -n "$camera_jpeg_quality" ]]; then
+  install_args+=(--camera-jpeg-quality "$camera_jpeg_quality")
 fi
 if [[ -n "$camera_stream_url" ]]; then
   install_args+=(--camera-stream-url "$camera_stream_url")

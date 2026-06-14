@@ -1,0 +1,95 @@
+name: onchain-rover
+
+services:
+  chain:
+    image: node:24-bookworm-slim
+    working_dir: /workspace/chain
+    ports:
+      - "${COMPOSE_CHAIN_PORT:-8545}:8545"
+    environment:
+      LOCAL_CHAIN_HOST: 0.0.0.0
+      LOCAL_CHAIN_ID: "31337"
+      LOCAL_CHAIN_RPC_URL: http://127.0.0.1:8545
+      LOCAL_CHAIN_EXPORT_RPC_URL: ${COMPOSE_LOCAL_CHAIN_EXPORT_RPC_URL:-http://127.0.0.1:8545}
+      PUBLIC_LOCAL_CHAIN_RPC_URL: ${COMPOSE_PUBLIC_LOCAL_CHAIN_RPC_URL:-http://127.0.0.1:8545}
+    volumes:
+      - .:/workspace
+      - chain_node_modules:/workspace/chain/node_modules
+    command: >
+      bash -lc '
+        set -euo pipefail
+        npm ci
+        npm run compile
+        npm run node &
+        node_pid=$$!
+        trap "kill $$node_pid 2>/dev/null || true" TERM INT
+        for _ in $$(seq 1 90); do
+          if node -e "fetch(\"http://127.0.0.1:8545\", { method: \"POST\", headers: { \"content-type\": \"application/json\" }, body: JSON.stringify({ jsonrpc: \"2.0\", id: 1, method: \"eth_chainId\", params: [] }) }).then((r) => r.json()).then((j) => process.exit(j.result ? 0 : 1)).catch(() => process.exit(1))"; then
+            break
+          fi
+          sleep 1
+        done
+        npm run deploy
+        wait "$$node_pid"
+      '
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          node -e "const fs=require('node:fs'); const p='/workspace/sidecar/src/generated/contracts.local.json'; if(!fs.existsSync(p)) process.exit(1); const d=JSON.parse(fs.readFileSync(p, 'utf8')); fetch('http://127.0.0.1:8545', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_getCode', params: [d.contracts.RaceEscrow, 'latest'] }) }).then((r) => r.json()).then((j) => process.exit(j.result && j.result !== '0x' ? 0 : 1)).catch(() => process.exit(1))"
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+    restart: unless-stopped
+
+  sidecar:
+    image: node:24-bookworm-slim
+    working_dir: /workspace/sidecar
+    depends_on:
+      chain:
+        condition: service_healthy
+    ports:
+      - "${COMPOSE_SIDECAR_PORT:-4021}:4021"
+    environment:
+      PORT: "4021"
+      PUBLIC_SIDECAR_URL: ${COMPOSE_PUBLIC_SIDECAR_URL:-http://127.0.0.1:4021}
+      LOCAL_CHAIN_ID: "31337"
+      LOCAL_CHAIN_RPC_URL: http://chain:8545
+      PUBLIC_LOCAL_CHAIN_RPC_URL: ${COMPOSE_PUBLIC_LOCAL_CHAIN_RPC_URL:-http://127.0.0.1:8545}
+      LOCAL_FACILITATOR_PRIVATE_KEY: ${COMPOSE_LOCAL_FACILITATOR_PRIVATE_KEY:-0x7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6}
+      LOCAL_TOKEN_OWNER_PRIVATE_KEY: ${COMPOSE_LOCAL_TOKEN_OWNER_PRIVATE_KEY:-0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80}
+      RACE_NETWORK_FEE_USDC: ${COMPOSE_RACE_NETWORK_FEE_USDC:-0.25}
+      TREASURY_ADDRESS: ${COMPOSE_TREASURY_ADDRESS:-0x08581b71bAab3781A1ca3f41E9d86aa681792c3C}
+      ALLOW_FREE_PILOT: ${COMPOSE_ALLOW_FREE_PILOT:-0}
+      ALLOW_ROUND_PILOT: ${COMPOSE_ALLOW_ROUND_PILOT:-0}
+      ALLOW_SHOW_RACE_AUTOSTART: ${COMPOSE_ALLOW_SHOW_RACE_AUTOSTART:-0}
+      ALLOW_SHOW_X402_FALLBACK: ${COMPOSE_ALLOW_SHOW_X402_FALLBACK:-0}
+      SHOW_FINISH_ODOMETRY_M: ${COMPOSE_SHOW_FINISH_ODOMETRY_M:-}
+      ALLOW_LOCAL_DEV_WALLETS: ${COMPOSE_ALLOW_LOCAL_DEV_WALLETS:-0}
+      GUARD_URL: ${COMPOSE_GUARD_URL:-http://172.16.2.151:8000}
+      COURIER_URL: ${COMPOSE_COURIER_URL:-http://192.168.0.192:8000}
+    volumes:
+      - .:/workspace
+      - sidecar_node_modules:/workspace/sidecar/node_modules
+    command: >
+      bash -lc '
+        set -euo pipefail
+        npm ci
+        npm run build:pilot
+        npm run start
+      '
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          node -e "fetch('http://127.0.0.1:4021/chain/health').then((r) => r.json()).then((j) => process.exit(j.ok ? 0 : 1)).catch(() => process.exit(1))"
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    restart: unless-stopped
+
+volumes:
+  chain_node_modules:
+  sidecar_node_modules:

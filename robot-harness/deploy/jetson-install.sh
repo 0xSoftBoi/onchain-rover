@@ -17,6 +17,10 @@ Options:
   --drive-invert                Flip motor polarity so positive commands drive forward.
   --drive-swap                  Swap left/right wheel commands before serial write.
   --camera-device PATH          Camera device marker. Default: /dev/video0.
+  --camera-size WxH             V4L2 capture size. Default: 320x240.
+  --camera-fps N                V4L2 capture fps request. Default: 30.
+  --camera-output-fps N         Optional output fps after ffmpeg re-encode.
+  --camera-jpeg-quality N       Optional MJPEG quality for re-encode, 2 best to 31 worst.
   --camera-stream-url URL       Optional upstream MJPEG stream to proxy.
   --camera-snapshot-url URL     Optional upstream snapshot URL to proxy.
   --lidar-port PATH             USB lidar device. Default: /dev/ttyACM0.
@@ -45,6 +49,10 @@ serial_baud="${ROVER_SERIAL_BAUD:-115200}"
 drive_invert="${ROVER_DRIVE_INVERT:-false}"
 drive_swap="${ROVER_DRIVE_SWAP:-false}"
 camera_device="${ROVER_CAMERA_DEVICE:-/dev/video0}"
+camera_size="${ROVER_CAMERA_SIZE:-320x240}"
+camera_fps="${ROVER_CAMERA_FPS:-30}"
+camera_output_fps="${ROVER_CAMERA_OUTPUT_FPS:-}"
+camera_jpeg_quality="${ROVER_CAMERA_JPEG_QUALITY:-}"
 camera_stream_url="${ROVER_CAMERA_STREAM_URL:-}"
 camera_snapshot_url="${ROVER_CAMERA_SNAPSHOT_URL:-}"
 lidar_port="${ROVER_LIDAR_PORT:-/dev/ttyACM0}"
@@ -90,6 +98,22 @@ while [[ $# -gt 0 ]]; do
       ;;
     --camera-device)
       camera_device="${2:?--camera-device requires a path}"
+      shift 2
+      ;;
+    --camera-size)
+      camera_size="${2:?--camera-size requires WxH}"
+      shift 2
+      ;;
+    --camera-fps)
+      camera_fps="${2:?--camera-fps requires a number}"
+      shift 2
+      ;;
+    --camera-output-fps)
+      camera_output_fps="${2:?--camera-output-fps requires a number}"
+      shift 2
+      ;;
+    --camera-jpeg-quality)
+      camera_jpeg_quality="${2:?--camera-jpeg-quality requires a number}"
       shift 2
       ;;
     --camera-stream-url)
@@ -177,6 +201,14 @@ if [[ ! -f "$env_file" || "$force_env" -eq 1 ]]; then
     echo "ROVER_LIDAR_BLOCK_THRESHOLD_M=${ROVER_LIDAR_BLOCK_THRESHOLD_M:-0.30}"
     if [[ -n "$camera_device" ]]; then
       echo "ROVER_CAMERA_DEVICE=$camera_device"
+    fi
+    echo "ROVER_CAMERA_SIZE=$camera_size"
+    echo "ROVER_CAMERA_FPS=$camera_fps"
+    if [[ -n "$camera_output_fps" ]]; then
+      echo "ROVER_CAMERA_OUTPUT_FPS=$camera_output_fps"
+    fi
+    if [[ -n "$camera_jpeg_quality" ]]; then
+      echo "ROVER_CAMERA_JPEG_QUALITY=$camera_jpeg_quality"
     fi
     if [[ -n "$camera_stream_url" ]]; then
       echo "ROVER_CAMERA_STREAM_URL=$camera_stream_url"

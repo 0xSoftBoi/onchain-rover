@@ -30,6 +30,44 @@ npm run e2e:harness-bridge
 npm run e2e:field-sim
 ```
 
+## Docker Compose
+
+Use the root compose file when the sidecar should own the local chain lifecycle:
+
+```bash
+docker compose up --wait
+```
+
+This starts:
+
+- `chain`: Hardhat on `0.0.0.0:8545`, then deploys `MockRaceToken` and
+  `RaceEscrow`.
+- `sidecar`: Express on `:4021`, after the chain deployment is healthy.
+
+The chain service writes `sidecar/src/generated/contracts.local.json` after
+deployment. Inside Docker, sidecar uses `LOCAL_CHAIN_RPC_URL=http://chain:8545`;
+the exported deployment still points host tools at `http://127.0.0.1:8545`.
+
+The compose defaults are public-safe: `ALLOW_FREE_PILOT=0` and
+`ALLOW_LOCAL_DEV_WALLETS=0`. For laptop-only rehearsals, opt in explicitly:
+
+```bash
+COMPOSE_ALLOW_LOCAL_DEV_WALLETS=1 COMPOSE_ALLOW_FREE_PILOT=1 docker compose up --wait
+```
+
+If port `4021` is already used by a local sidecar, run the composed sidecar on
+another host port:
+
+```bash
+COMPOSE_SIDECAR_PORT=4026 \
+COMPOSE_PUBLIC_SIDECAR_URL=http://127.0.0.1:4026 \
+docker compose up --wait
+```
+
+For internet visibility, put a stable HTTPS tunnel in front of the sidecar and
+set `COMPOSE_PUBLIC_SIDECAR_URL` to that URL before starting compose. Do not set
+`COMPOSE_ALLOW_FREE_PILOT=1` on a public tunnel.
+
 For manual sidecar development:
 
 ```bash
@@ -488,6 +526,27 @@ SIDECAR_URL=http://127.0.0.1:4021 LIDAR_ROBOTS=guard,courier \
 
 It listens to `/ws/telemetry`, watches `lidar.front_m` or `lidar.min_m`, and
 posts a finish detection when the threshold is crossed.
+
+AprilTag finish spike:
+
+```bash
+npm --prefix sidecar run spike:apriltag-finish -- detections.jsonl
+```
+
+The spike consumes JSON or JSONL frames from a camera/CV process. Each frame can
+include `frameId`, `ts_ms`, `brightness`, and `tags` with AprilTag `id`, center
+`x`/`y`, and `confidence` or `decisionMargin`. It checks a normalized vertical
+finish band (`APRILTAG_FINISH_BAND`, default `0.46,0.54`), maps tag ids to
+drivers (`APRILTAG_CHALLENGER_IDS`, `APRILTAG_OPPONENT_IDS`), and reports:
+
+- detected tag id, frame id, timestamp, confidence, and inferred winner
+- false-positive tag events in the finish band
+- latency against an optional operator winner/time in the input
+- low-light constraints from frame brightness samples
+- whether the sample is reliable enough to promote later
+
+This is a spike report only. It does not gate v1 settlement or replace operator
+finish confirmation.
 
 ## Robot Harness Bridge
 
