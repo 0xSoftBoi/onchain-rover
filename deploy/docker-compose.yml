@@ -1,0 +1,41 @@
+# Phase 5 — off-board servers for a CUDA Linux box (the laptop-GPU role).
+# `restart: unless-stopped` + healthchecks = auto-recovery if a server crashes
+# mid-demo. On a Mac without nvidia-docker, use ../scripts/demo_up.sh instead.
+#
+#   POLICY_BACKEND=nomad BRAIN_BACKEND=robobrain docker compose -f deploy/docker-compose.yml up -d
+#   docker compose -f deploy/docker-compose.yml ps        # health
+services:
+  nav:
+    build: { context: .., dockerfile: deploy/Dockerfile.servers }
+    command: uvicorn nav_policy_server:app --host 0.0.0.0 --port 4041
+    working_dir: /app/robot
+    environment:
+      - POLICY_BACKEND=${POLICY_BACKEND:-stub}
+      - NAV_STEER_SIGN=${NAV_STEER_SIGN:-1.0}
+      - NAV_LAT_SIGN=${NAV_LAT_SIGN:-1.0}
+    ports: ["4041:4041"]
+    restart: unless-stopped
+    gpus: all                       # ignored if no GPU/runtime; stub still runs
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests,sys; sys.exit(0 if requests.get('http://localhost:4041/health',timeout=3).json().get('ok') else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 120s            # weight load can be slow
+
+  brain:
+    build: { context: .., dockerfile: deploy/Dockerfile.servers }
+    command: uvicorn brain_service:app --host 0.0.0.0 --port 4051
+    working_dir: /app/robot
+    environment:
+      - BRAIN_BACKEND=${BRAIN_BACKEND:-stub}
+      - BRAIN_MODEL=${BRAIN_MODEL:-BAAI/RoboBrain2.0-3B}
+    ports: ["4051:4051"]
+    restart: unless-stopped
+    gpus: all
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests,sys; sys.exit(0 if requests.get('http://localhost:4051/health',timeout=3).json().get('ok') else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 300s            # RoboBrain-3B load is heavy

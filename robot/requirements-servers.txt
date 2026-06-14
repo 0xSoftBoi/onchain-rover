@@ -1,0 +1,13 @@
+# Off-board policy + brain servers (nav_policy_server.py, brain_service.py).
+# This set is STUB-capable: the whole pipeline runs with no models, no robot.
+fastapi
+uvicorn
+pydantic>=2
+requests
+numpy
+opencv-python-headless
+
+# --- real weights (install on the GPU box only) ---------------------------
+# NoMaD policy:   pip install general-navigation        (pulls torch + diffusers)
+# RoboBrain brain: pip install transformers qwen-vl-utils 'accelerate>=0.26'
+#                  + a CUDA torch build; downloads BAAI/RoboBrain2.0-3B (~6 GB)

@@ -99,6 +99,25 @@ class Rover:
         self._send({"T": 1, "L": float(left) * self._INVERT,
                     "R": float(right) * self._INVERT})
 
+    def drive_xz(self, linear, angular):
+        """ROS-style differential drive — native firmware cmd T:13 (X=linear m/s,
+        Z=angular rad/s). Cleaner than hand-rolled diff-drive for Twist/cmd_vel.
+        Also sustained via the target thread (mirror into L/R for the resend)."""
+        # firmware does the X/Z->wheel mix; we still send T:13 + keep alive
+        self._target = (linear, angular)   # reused by sustain as a passthrough
+        self._send({"T": 13, "X": float(linear) * self._INVERT,
+                    "Z": float(angular)})
+
+    def set_heartbeat(self, ms=10000):
+        """Set the firmware motion failsafe timeout (default fw = 3000ms). We
+        still resend ~12Hz, but raising this is belt-and-suspenders. T:136."""
+        self._send({"T": 136, "cmd": int(ms)})
+
+    def enable_feedback(self, on=True):
+        """Turn on continuous base-info feedback flow (T:131) so telemetry
+        streams without polling each frame."""
+        self._send({"T": 131, "cmd": 1 if on else 0})
+
     def forward(self, speed=0.2):
         self.drive(speed, speed)
 

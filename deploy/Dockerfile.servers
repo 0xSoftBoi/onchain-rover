@@ -1,0 +1,20 @@
+# Phase 5 — image for the off-board policy + brain servers.
+# Stub-capable by default (no torch). For real weights, uncomment the heavy
+# extras below and build on a CUDA host.
+FROM python:3.11-slim
+
+# opencv-python-headless needs libGL; nothing else heavy for stub mode
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libglib2.0-0 libgl1 && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY robot/requirements-servers.txt robot/requirements-servers.txt
+RUN pip install --no-cache-dir -r robot/requirements-servers.txt
+
+# --- real weights (build on a GPU host) -----------------------------------
+# RUN pip install --no-cache-dir general-navigation transformers qwen-vl-utils "accelerate>=0.26"
+
+COPY robot/ robot/
+WORKDIR /app/robot
+EXPOSE 4041 4051
+# command is provided by docker-compose (nav vs brain)

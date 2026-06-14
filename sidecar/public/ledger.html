@@ -6,7 +6,11 @@
 <title>Treasury — Ledger Governance</title>
 <style>
   body { margin:0; background:#0a0e14; color:#e6edf3; font:15px/1.6 ui-monospace,Menlo,monospace;
-         display:flex; flex-direction:column; align-items:center; padding:40px 20px; }
+         display:flex; flex-direction:column; align-items:center; justify-content:center;
+         min-height:100vh; box-sizing:border-box; padding:40px 20px; }
+  .brand { color:#7d8aa0; font-size:12px; letter-spacing:2px; text-transform:uppercase;
+           margin-bottom:18px; }
+  .brand b { color:#d8a657; }
   .card { background:#141a24; border:1px solid #222c3a; border-radius:14px; padding:28px;
           max-width:860px; width:100%; }
   h1 { font-size:20px; margin:0 0 6px; } .sub { color:#7d8aa0; font-size:13px; margin-bottom:20px; }
@@ -24,8 +28,13 @@
   button { background:#1f6feb; color:#fff; border:0; padding:12px; border-radius:8px;
            font:inherit; cursor:pointer; width:100%; margin-top:6px; }
   button:hover { background:#388bfd; } button:disabled { opacity:.4; }
-  .warn { background:#21262d; border:1px solid #f85149; color:#f85149; padding:10px 12px;
-          border-radius:8px; font-size:13px; margin:16px 0; }
+  .feature { background:#1d1a12; border:1px solid #d8a657; border-left:3px solid #d8a657;
+             color:#e6edf3; padding:12px 14px; border-radius:8px; font-size:13px; margin:16px 0; }
+  .feature .ft-h { color:#d8a657; font-weight:700; display:block; margin-bottom:6px; }
+  .feature code { color:#d8a657; }
+  @keyframes shimmer { 0%{opacity:.35} 50%{opacity:.85} 100%{opacity:.35} }
+  .loading { animation:shimmer 1.2s ease-in-out infinite; }
+  .hint { color:#3fb950; font-size:11px; margin:4px 0 0; min-height:14px; }
   #status { color:#7d8aa0; font-size:13px; margin-top:16px; min-height:20px;
             border-top:1px solid #222c3a; padding-top:12px; }
   .ok { color:#3fb950; } a { color:#58a6ff; }
@@ -52,15 +61,18 @@
 </style>
 </head>
 <body>
+<div class="brand">The Onchain <b>Rover</b> · Fleet Treasury</div>
 <div class="card">
   <h1>🔐 Fleet Treasury</h1>
   <div class="sub">guard.rover.eth + courier.rover.eth earnings · Arc testnet</div>
-  <div class="bal"><span id="bal">—</span> <small>USDC</small></div>
+  <div class="bal"><span id="bal" class="loading">—</span> <small>USDC</small></div>
   <div class="sub" id="owner" style="text-align:center"></div>
 
-  <div class="warn">⚠️ Robots earn autonomously, but moving the treasury requires a
-    human to physically clear-sign on a Ledger. The device shows the exact intent
-    (ERC-7730): <code>Withdraw N USDC → recipient</code>.</div>
+  <div class="feature">
+    <span class="ft-h">⛓ Human authority at both ends (clear-signing)</span>
+    The robots run autonomously, but a human bookends the show on a Ledger:
+    <code>Authorize</code> the fleet to begin, and <code>Withdraw</code> the
+    earnings at the end. What the device displays is what executes.</div>
 
   <div class="section">
     <h2>Race fee ledger</h2>
@@ -89,25 +101,40 @@
     </div>
   </div>
 
-  <div class="step"><span class="n">1</span> Connect &amp; unlock your Ledger, open the Ethereum app</div>
-  <button id="connect">Connect Ledger (WebHID)</button>
+  <div class="step"><span class="n">1</span> Connect your Ledger, open the Ethereum app</div>
+  <div class="row" style="gap:14px;align-items:center;margin:6px 0 8px">
+    <label style="color:#7d8aa0;font-size:13px"><input type="radio" name="tx" value="ble" checked /> Bluetooth (Nano X)</label>
+    <label style="color:#7d8aa0;font-size:13px"><input type="radio" name="tx" value="hid" /> USB</label>
+  </div>
+  <button id="connect">Connect Ledger</button>
 
-  <div class="step" style="margin-top:18px"><span class="n">2</span> Withdraw fleet earnings</div>
+  <div class="step" style="margin-top:18px"><span class="n">2</span> Authorize the fleet for this session (opening — gasless)</div>
+  <button id="authorize" disabled>Authorize → clear-sign on device</button>
+  <div class="hint" id="authHint"></div>
+
+  <div class="step" style="margin-top:18px"><span class="n">3</span> Withdraw fleet earnings (closing)</div>
   <div class="row">
     <input id="to" placeholder="recipient 0x…" />
     <input id="amt" placeholder="USDC" style="max-width:90px" value="1.00" />
   </div>
+  <div class="hint" id="toHint"></div>
   <button id="withdraw" disabled>Withdraw → clear-sign on device</button>
 
-  <div id="status">WebHID requires Chrome/Edge over HTTPS or localhost.</div>
+  <div id="status">Clear-signing requires Chrome/Edge over HTTPS or localhost.</div>
 </div>
 
 <script type="module">
 import "./ledger.bundle.js";
 const $ = (id)=>document.getElementById(id);
+let prevBal;
+if(!navigator.hid && !navigator.bluetooth){ $("connect").disabled=true; $("status").textContent="No WebHID/WebBluetooth — use Chrome/Edge over HTTPS"; }
 async function refresh(){
   try { const i = await (await fetch("/treasury/info")).json();
-    if (i.deployed){ $("bal").textContent = (Number(i.balanceUsdc6)/1e6).toFixed(2);
+    $("bal").classList.remove("loading");
+    if (i.deployed){ const v = Number(i.balanceUsdc6||0)/1e6;
+      $("bal").textContent = v.toFixed(2);
+      if (prevBal!=null && v > prevBal) $("bal").animate([{color:'#fff'},{color:'#d8a657'}],{duration:600});
+      prevBal = v;
       $("owner").textContent = "owner (Ledger): " + i.owner; }
     else $("bal").textContent = "not deployed"; } catch {}
 }
@@ -140,14 +167,29 @@ async function refreshFeeLedger(){
   }
 }
 $("connect").onclick = async () => {
-  try { const a = await window.roverLedger.connect();
-    $("withdraw").disabled = false; if(!$("to").value) $("to").value = a; }
+  try {
+    const tx = (document.querySelector('input[name="tx"]:checked')||{}).value || "auto";
+    const a = await window.roverLedger.connect(tx);
+    $("authorize").disabled = false;
+    $("withdraw").disabled = false;
+    if(!$("to").value){ $("to").value = a; $("toHint").textContent = "✓ your Ledger address"; } }
   catch(e){ $("status").textContent = "✗ " + e.message; }
+};
+$("authorize").onclick = async () => {
+  try { $("authorize").disabled = true;
+    const r = await window.roverLedger.authorize();
+    $("authHint").innerHTML = '<span class="ok">✓ fleet authorized — the show may begin</span>';
+  } catch(e){ $("status").textContent = "✗ " + e.message; $("authorize").disabled = false; }
 };
 $("withdraw").onclick = async () => {
   try { $("withdraw").disabled = true;
     const r = await window.roverLedger.withdraw($("to").value, $("amt").value);
-    $("status").innerHTML = '<span class="ok">✓ withdrawn</span> · <a target="_blank" href="https://testnet.arcscan.app/tx/'+r.tx+'">'+r.tx.slice(0,12)+'…</a>';
+    if (r && r.tx){
+      $("status").innerHTML = '<span class="ok">✓ withdrawn</span> · <a target="_blank" href="https://testnet.arcscan.app/tx/'+r.tx+'">'+r.tx.slice(0,12)+'…</a>';
+    } else {
+      $("status").textContent = "✗ withdrawal returned no transaction hash — check the device and try again";
+    }
+    $("withdraw").disabled = false;
     refresh();
   } catch(e){ $("status").textContent = "✗ " + e.message; $("withdraw").disabled = false; }
 };

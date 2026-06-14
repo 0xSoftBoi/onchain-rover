@@ -20,6 +20,35 @@ def narrate(line, hold=2.0):
     time.sleep(hold * PACE)
 
 
+def prologue():
+    """Opening bookend: a human clear-signs the GASLESS session authorization on a
+    Ledger (over Bluetooth) before the robots do anything. Polls /session/status
+    until authorized. Degrades for rehearsals: continues after a timeout unless
+    SHOW_REQUIRE_AUTH=1. Bookends climax()'s closing Withdraw sign."""
+    narrate("PROLOGUE — the operator authorizes the fleet on a Ledger "
+            "(Bluetooth clear-sign: 'Authorize fleet to operate'). (runs in /ledger.html)", 3)
+    wait = float(os.environ.get("SHOW_AUTH_WAIT", "120"))
+    require = os.environ.get("SHOW_REQUIRE_AUTH") == "1"
+    t0 = time.time()
+    while time.time() - t0 < wait:
+        ok, st = cp.call("GET", f"{cp.SIDECAR}/session/status", timeout=6)
+        if ok and isinstance(st, dict) and st.get("authorized"):
+            cp.say(cp.GUARD, "Authorized. Powering up.")
+            narrate(f"✓ fleet authorized by {st.get('operator','operator')[:10]}… "
+                    "— autonomous operation begins.", 2)
+            return True
+        if not ok and not require:           # endpoint missing (older sidecar) -> skip
+            narrate("(no /session gate — continuing without the opening sign)", 1.5)
+            return False
+        print("   …waiting for the Ledger authorization")
+        time.sleep(3 * PACE)
+    if require:
+        print("\n‼️  no authorization within timeout (SHOW_REQUIRE_AUTH=1) — aborting.")
+        raise SystemExit(1)
+    narrate("(authorization not signed in time — continuing for rehearsal)", 1.5)
+    return False
+
+
 def act2():
     """Rover GP: open betting -> bets -> 3-2-1-GO -> race -> finish + settle."""
     S, G, C = cp.SIDECAR, cp.GUARD, cp.COURIER
@@ -53,10 +82,10 @@ def climax():
             "Moving it takes a HUMAN.", 3)
     ok, info = cp.call("GET", f"{cp.SIDECAR}/treasury/info", timeout=8)
     print(f"   treasury: {info}")
-    narrate("Operator hits Withdraw → it BLOCKS → a Ledger lights up showing the "
-            "clear-signed intent: 'Withdraw N USDC → recipient'. "
-            "Human presses confirm. (runs in /ledger.html)", 3)
-    cp.say(cp.GUARD, "Autonomous robots. Human-held keys.")
+    narrate("The SAME Ledger that authorized the fleet now releases its earnings: "
+            "Withdraw BLOCKS → the device clear-signs 'Withdraw N USDC → recipient' "
+            "→ human presses confirm. (runs in /ledger.html)", 3)
+    cp.say(cp.GUARD, "Autonomous robots. Human-held keys. Start to finish.")
 
 
 def main():
@@ -64,6 +93,7 @@ def main():
     print("  THE ONCHAIN ROVER — FULL SHOW (hands-free)")
     print("=" * 52)
     cp.discover()                 # gate: aborts cleanly if a participant is down
+    prologue()                    # opening bookend: human Ledger authorizes the fleet
     narrate("ACT 1 — THE CHECKPOINT. A software agent hires the courier.", 2.5)
     cp.run()                      # Act 1 (its own beat summary)
     act2()

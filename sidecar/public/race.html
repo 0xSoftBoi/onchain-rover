@@ -23,13 +23,28 @@
   .bet-row { display:flex; gap:6px; margin-top:10px; }
   .bet-row button { flex:1; background:#1f6feb; color:#fff; border:0; padding:10px; border-radius:7px; font:inherit; cursor:pointer; }
   .bet-row button:hover { background:#388bfd; }
+  .bet-row button:disabled { background:#30363d; color:var(--dim); cursor:not-allowed; }
   .banner { text-align:center; font-size:40px; font-weight:800; padding:14px;
-            letter-spacing:2px; min-height:30px; }
+            letter-spacing:2px; min-height:56px; display:flex; align-items:center; justify-content:center; }
   .banner.go { color:var(--grn); } .banner.count { color:var(--gold); }
+  .banner.go { animation:gopulse .5s ease; }
+  @keyframes gopulse { from { transform:scale(1.25); } to { transform:scale(1); } }
   .ctrl { text-align:center; padding:10px; }
   .ctrl button { background:#238636; color:#fff; border:0; padding:9px 18px; border-radius:7px; font:inherit; cursor:pointer; margin:0 5px; }
   .ctrl button.sec { background:#30363d; }
+  .ctrl .finish-row { margin-top:14px; padding-top:12px; border-top:1px solid var(--line); }
+  .ctrl .finish-row button.danger { background:#6e2c2c; }
+  .ctrl .finish-row button.danger:hover { background:var(--red); }
   .status { text-align:center; color:var(--dim); padding-bottom:10px; }
+  #wid { display:inline-block; margin-top:8px; font-size:12px; padding:4px 12px; border-radius:999px;
+         border:1px solid var(--line); background:var(--card); color:var(--dim); }
+  #wid.ok { color:var(--grn); border-color:var(--grn); }
+  #wid.off { color:var(--gold); border-color:var(--gold); }
+  .lane.lose { opacity:.45; filter:grayscale(.6); transition:.4s; }
+  .odds.flash { animation:oddsflash .8s ease; }
+  @keyframes oddsflash { 0% { color:var(--blu); transform:scale(1.3); } 100% { color:var(--gold); transform:scale(1); } }
+  button:active { transform:translateY(1px); filter:brightness(.9); }
+  @media(max-width:520px){ .bet-row button { padding:14px; } }
   #toast { position:fixed; bottom:20px; left:50%; transform:translateX(-50%);
            background:var(--card); border:1px solid var(--line); padding:10px 18px;
            border-radius:8px; opacity:0; transition:.3s; }
@@ -39,6 +54,7 @@
 <header>
   <h1>🏁 ROVER GP — LIVE DRAG RACE</h1>
   <div class="sub">pay to pilot · bet on the winner · settled on-chain by the guard robot · one bet per human (World ID)</div>
+  <div id="wid">🌐 World ID: one human, one bet</div>
 </header>
 <div class="banner" id="banner">—</div>
 <div class="lanes" id="lanes"></div>
@@ -47,8 +63,10 @@
   <button onclick="api('/race/open','open race + betting')">① Open betting</button>
   <button onclick="api('/race/arm','lock bets')">② Lock bets</button>
   <button onclick="countdown()">③ 3·2·1·GO</button>
-  <button class="sec" onclick="finish('guard')">guard wins</button>
-  <button class="sec" onclick="finish('courier')">courier wins</button>
+  <div class="finish-row">
+    <button class="danger" onclick="finish('guard')">guard wins</button>
+    <button class="danger" onclick="finish('courier')">courier wins</button>
+  </div>
 </div>
 <div id="toast"></div>
 
@@ -56,7 +74,8 @@
 <script>
 const $ = (id)=>document.getElementById(id);
 const usd = (n)=>"$"+Number(n||0).toFixed(2);
-let feeds = {}, racers = ["guard","courier"];
+let racers = ["guard","courier"];
+let _laneSig = null, _prevOdds = {};
 function toast(m){ const t=$("toast"); t.textContent=m; t.style.opacity=1; setTimeout(()=>t.style.opacity=0,2200); }
 
 async function api(path,label){ try{ await fetch(path,{method:"POST"}); toast(label); }catch(e){ toast("err: "+e.message);} }
@@ -67,7 +86,6 @@ async function poll(){
       (await fetch("/status")).json(),
       (await fetch("/race/odds")).json(),
     ]);
-    racers = Object.keys(st.robots);
     const race = st.race || {};
     renderLanes(st.robots, od, race);
     let banner = "PADDOCK", cls="";
@@ -80,42 +98,92 @@ async function poll(){
   } catch(e){ $("status").textContent="poll err: "+e.message; }
 }
 function renderLanes(robots, od, race){
-  let h="";
-  for (const name of Object.keys(robots)){
-    const r=robots[name], o=(od.odds&&od.odds[name])||1, pool=(od.pool&&od.pool[name])||0;
-    const win = race.status==="finished" && race.winner===name;
-    h+=`<div class="lane ${win?'win':''}">
-      <h2><span>${r.ens||name}</span><span class="odds">${o.toFixed(2)}×</span></h2>
-      <img id="feed-${name}" />
-      <div class="pool">pool ${usd(pool)} on this rover</div>
-      <div class="bet-row">
-        <button onclick="bet('${name}',1)">Bet $1</button>
-        <button onclick="bet('${name}',2)">$2</button>
-        <button onclick="bet('${name}',5)">$5</button>
-      </div></div>`;
+  const names = Object.keys(robots);
+  const widOk = !!(worldCfg && worldCfg.configured);
+  // signature of structural state — only rebuild DOM (and restart streams) when this changes
+  const sig = JSON.stringify({
+    names,
+    ens: names.map(n=>robots[n].ens||n),
+    winner: race.winner||"", status: race.status||"",
+    wid: widOk
+  });
+  if (sig !== _laneSig){
+    _laneSig = sig;
+    let h="";
+    for (const name of names){
+      const r=robots[name], o=(od.odds&&od.odds[name])||1, pool=(od.pool&&od.pool[name])||0;
+      const win = race.status==="finished" && race.winner===name;
+      const lose = race.status==="finished" && race.winner && race.winner!==name;
+      const disabled = widOk?"":"disabled";
+      const dttl = widOk?"":` title="World ID required"`;
+      h+=`<div class="lane ${win?'win':''} ${lose?'lose':''}">
+        <h2><span>${r.ens||name}</span><span class="odds" id="odds-${name}">${o.toFixed(2)}×</span></h2>
+        <img id="feed-${name}" />
+        <div class="pool" id="pool-${name}">pool ${usd(pool)} on this rover</div>
+        <div class="bet-row">
+          <button ${disabled}${dttl} onclick="bet('${name}',1)">Bet $1</button>
+          <button ${disabled}${dttl} onclick="bet('${name}',2)">$2</button>
+          <button ${disabled}${dttl} onclick="bet('${name}',5)">$5</button>
+        </div></div>`;
+    }
+    $("lanes").innerHTML=h;
+    // attach winner trophy line to the winning lane h2
+    for (const name of names){
+      if (race.status==="finished" && race.winner===name){
+        const o=(od.odds&&od.odds[name])||1;
+        const h2=$("odds-"+name); if(h2&&h2.parentNode){ h2.insertAdjacentHTML('afterend',`<span class="odds" style="color:var(--grn)"> 🏆 PAYS ${o.toFixed(2)}×</span>`); }
+      }
+    }
+    // (re)assign stream sources only on rebuild so MJPEG isn't restarted every poll
+    for (const name of names){
+      const img=$("feed-"+name); const src=robots[name].feed||(robots[name].url?robots[name].url+"/stream":null);
+      if(img && src && !img.src.endsWith(src)) img.src=src;
+    }
   }
-  $("lanes").innerHTML=h;
-  for (const name of Object.keys(robots)){
-    const img=$("feed-"+name); if(img && robots[name].url && !img.src.includes("/stream")) img.src=robots[name].url+"/stream";
+  // in-place updates that must NOT touch the <img>
+  for (const name of names){
+    const o=(od.odds&&od.odds[name])||1, pool=(od.pool&&od.pool[name])||0;
+    const oddsEl=$("odds-"+name);
+    if (oddsEl){
+      const txt=o.toFixed(2)+"×";
+      if (oddsEl.textContent!==txt){
+        oddsEl.textContent=txt;
+        if (_prevOdds[name]!==undefined && _prevOdds[name]!==o){
+          oddsEl.classList.remove('flash'); void oddsEl.offsetWidth; oddsEl.classList.add('flash');
+        }
+      }
+      _prevOdds[name]=o;
+    }
+    const poolEl=$("pool-"+name);
+    if (poolEl){ const ptxt=`pool ${usd(pool)} on this rover`; if(poolEl.textContent!==ptxt) poolEl.textContent=ptxt; }
   }
 }
 // REAL World ID: IDKit proof -> server verify -> nullifier-gated bet. No fakes.
 let worldCfg = null;
-async function loadWorld(){ try { worldCfg = await (await fetch("/worldid/config")).json(); } catch {} }
+async function loadWorld(){
+  try { worldCfg = await (await fetch("/worldid/config")).json(); } catch {}
+  const w=$("wid"); if(w){
+    if (worldCfg && worldCfg.configured){ w.className="ok"; w.textContent="🌐 World ID: one human, one bet"; }
+    else { w.className="off"; w.textContent="🌐 World ID: not configured"; }
+  }
+}
 async function bet(racer,amount){
   if (!worldCfg || !worldCfg.configured){ toast("✋ World ID not configured (set WORLD_APP_ID)"); return; }
   if (!window.IDKit){ toast("loading World ID…"); return; }
   // open the real IDKit widget; signal binds the proof to the chosen racer
-  IDKit.init({ app_id: worldCfg.appId, action: worldCfg.action, signal: racer,
-    verification_level: "device",
-    handleVerify: async (proof) => {
-      const r = await (await fetch("/race/bet",{method:"POST",headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({racer,amount,proof})})).json();
-      if (r.error) throw new Error(r.error);
-      toast(`✅ verified bet ${usd(amount)} on ${racer} — odds now ${r.odds[racer]}×`);
-    },
-    onSuccess: ()=>{} });
-  IDKit.open();
+  try {
+    IDKit.init({ app_id: worldCfg.appId, action: worldCfg.action, signal: racer,
+      verification_level: "device",
+      handleVerify: async (proof) => {
+        const r = await (await fetch("/race/bet",{method:"POST",headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({racer,amount,proof})})).json();
+        if (r.error) throw new Error(r.error);
+        const o=(r.odds&&r.odds[racer])??"?";
+        toast(`✅ verified bet ${usd(amount)} on ${racer} — odds now ${o}×`);
+      },
+      onSuccess: ()=>{} });
+    IDKit.open();
+  } catch(e){ toast("World ID init failed: "+e.message); }
 }
 async function countdown(){
   await api("/race/arm","");
@@ -127,6 +195,7 @@ async function countdown(){
   toast("GO! pilots drive now");
 }
 async function finish(winner){
+  if(!confirm('Finish race — '+winner+' wins?'))return;
   await fetch("/race/finish",{method:"POST",headers:{'Content-Type':'application/json'},body:JSON.stringify({winner})});
   toast("🏁 "+winner+" wins — settle on-chain when funded");
 }

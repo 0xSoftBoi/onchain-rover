@@ -10,7 +10,9 @@ import { createPublicClient, http, parseAbiItem } from "viem";
 import { sepolia } from "viem/chains";
 import { ERC8004 } from "./config.js";
 
-const bq = new BigQuery();
+// Auth via ADC (GOOGLE_APPLICATION_CREDENTIALS = booth service-account JSON).
+// projectId = the billing project for querying the public ERC-8004 dataset.
+const bq = new BigQuery(process.env.GCP_PROJECT ? { projectId: process.env.GCP_PROJECT } : {});
 
 const MAINNET_REPUTATION = "0x8004baa17c55a88189ae136b182e5fda19de9b63"; // lowercase
 

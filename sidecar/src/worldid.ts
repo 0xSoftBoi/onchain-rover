@@ -9,9 +9,15 @@
  */
 const APP_ID = process.env.WORLD_APP_ID;          // app_...
 const ACTION = process.env.WORLD_ACTION ?? "rover-gp-bet";
+const RP_ID = process.env.WORLD_RP_ID;            // rp_... (World ID 4.0 managed RP)
+// World ID 4.0 verifies against the RP endpoint; classic apps use /api/v2/verify/{app_id}.
+const VERIFY_URL = process.env.WORLD_VERIFY_ENDPOINT
+  ?? (RP_ID
+    ? `https://developer.world.org/api/v4/verify/${RP_ID}`
+    : `https://developer.worldcoin.org/api/v2/verify/${APP_ID}`);
 
 export function config() {
-  return { appId: APP_ID ?? null, action: ACTION, configured: Boolean(APP_ID) };
+  return { appId: APP_ID ?? null, action: ACTION, rpId: RP_ID ?? null, configured: Boolean(APP_ID) };
 }
 
 export type WorldProof = {
@@ -24,7 +30,7 @@ export type WorldProof = {
 /** Verify a World ID proof with the cloud verifier. Returns the real nullifier. */
 export async function verify(p: WorldProof, signal?: string) {
   if (!APP_ID) throw new Error("WORLD_APP_ID not set — World ID required, no fallback");
-  const res = await fetch(`https://developer.worldcoin.org/api/v2/verify/${APP_ID}`, {
+  const res = await fetch(VERIFY_URL, {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       nullifier_hash: p.nullifier_hash,

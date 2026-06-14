@@ -12,9 +12,9 @@
          font:14px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; }
   header { padding:18px 24px; border-bottom:1px solid var(--line);
            display:flex; align-items:baseline; gap:14px; }
-  h1 { font-size:18px; margin:0; letter-spacing:.5px; }
+  h1 { font-size:22px; margin:0; letter-spacing:.5px; text-shadow:0 0 12px rgba(63,185,80,.25); }
   .sub { color:var(--dim); font-size:12px; }
-  .wrap { display:grid; grid-template-columns:1fr 1fr; gap:16px; padding:20px; max-width:1100px; }
+  .wrap { display:grid; grid-template-columns:1fr 1fr; gap:16px; padding:20px; max-width:1400px; }
   .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px; }
   .card h2 { font-size:12px; text-transform:uppercase; letter-spacing:1px;
              color:var(--dim); margin:0 0 12px; }
@@ -34,22 +34,92 @@
   button { background:#1f6feb; color:#fff; border:0; padding:9px 16px; border-radius:7px;
            font:inherit; cursor:pointer; margin:4px 6px 4px 0; }
   button:hover { background:#388bfd; } button:disabled { opacity:.4; cursor:default; }
+  button:active { transform:translateY(1px); filter:brightness(.9); }
   .btn-tx { background:#238636; } .btn-tx:hover { background:#2ea043; }
   a { color:var(--blu); } code { color:var(--gold); }
   .kv { display:flex; justify-content:space-between; padding:3px 0; border-bottom:1px solid var(--line); }
   .kv:last-child { border:0; } .kv .v { color:var(--dim); }
-  #log { font-size:12px; color:var(--dim); max-height:140px; overflow:auto; white-space:pre-wrap; }
+  #log { font-size:12.5px; color:#9aa7bd; line-height:1.6; max-height:140px; overflow:auto; white-space:pre-wrap; }
+  /* On-chain settlement — the hero panel */
+  .hero { grid-column:1 / -1; border:1px solid #2ea043;
+          box-shadow:0 0 28px rgba(63,185,80,.18); background:linear-gradient(180deg,#101a16,#141a24); }
+  .hero h2 { font-size:15px; color:var(--grn); letter-spacing:1.5px; display:flex;
+             align-items:center; gap:10px; }
+  .hero .live { width:9px; height:9px; border-radius:50%; background:var(--grn);
+                box-shadow:0 0 8px var(--grn); animation:pulse 1.4s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.35} }
+  #onchain { max-height:340px; overflow:auto; }
+  .oc { display:grid; grid-template-columns:84px 1fr auto; align-items:center; gap:14px;
+        padding:12px 10px; border-bottom:1px solid var(--line); font-size:15px; animation:slidein .4s; }
+  @keyframes slidein { from{opacity:0; transform:translateY(-6px)} to{opacity:1} }
+  .oc:first-child { background:rgba(63,185,80,.06); }
+  .oc .tag { font-weight:700; font-size:12px; text-transform:uppercase; letter-spacing:.5px;
+             padding:5px 10px; border-radius:6px; text-align:center; border:1px solid currentColor; }
+  .oc .det { color:var(--txt); }
+  .oc .tx a { font-size:13px; color:var(--blu); }
+  .oc .ts { color:var(--dim); font-size:11px; }
+  .ocstats { display:flex; gap:30px; padding:6px 4px 16px; }
+  .ocstats .big { font-size:34px; font-weight:800; color:var(--grn); line-height:1; }
+  .ocstats .lbl { color:var(--dim); font-size:11px; text-transform:uppercase; letter-spacing:.5px; margin-top:4px; }
+  .oc-hero { padding:4px 4px 10px; }
+  #oc-usdc { font-size:56px; font-weight:800; color:var(--grn); line-height:1;
+             text-shadow:0 0 18px rgba(63,185,80,.4); }
+  .oc-hero .lbl { color:var(--dim); font-size:11px; text-transform:uppercase; letter-spacing:.5px; margin-top:6px; }
+  .ocstats .big.sub-stat { font-size:22px; }
+  .ocstats .lbl.sub-stat { color:var(--dim); }
+  /* Live agent reasoning (on-device LLM) */
+  .brain { grid-column:1 / -1; border:1px solid #8957e5; box-shadow:0 0 24px rgba(137,87,229,.15);
+           background:linear-gradient(180deg,#16121f,#141a24); }
+  .brain h2 { color:#bc8cff; font-size:15px; letter-spacing:1.5px; }
+  .minds { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+  .mind { background:#0a0e14; border:1px solid var(--line); border-radius:8px; padding:12px;
+          height:260px; overflow:auto; display:flex; flex-direction:column-reverse; }
+  .mind .who { font-weight:700; margin-bottom:8px; position:sticky; top:0; }
+  .mind.guard .who { color:var(--gold); } .mind.courier .who { color:var(--blu); }
+  .th { font-size:13.5px; line-height:1.5; margin:5px 0; padding-left:10px; border-left:2px solid var(--line); animation:slidein .3s; }
+  .th .ph { color:var(--dim); font-size:10px; text-transform:uppercase; letter-spacing:.5px; }
+  .th.decision { border-left-color:var(--grn); color:#fff; font-weight:600; }
+  .th.offer { border-left-color:var(--gold); }
+  .th.plan { border-left-color:#bc8cff; color:var(--dim); }
+  .cursor { display:inline-block; width:7px; height:14px; background:#bc8cff; animation:pulse 1s infinite; vertical-align:middle; }
+  @media (max-width:760px){ .wrap{grid-template-columns:1fr} .minds{grid-template-columns:1fr} .price{font-size:36px} }
 </style>
 </head>
 <body>
 <header>
   <h1>🤖 THE ONCHAIN ROVER</h1>
   <span class="sub">Mission Control · hire a robot over HTTP · ETHGlobal NYC 2026</span>
+  <a href="broadcast.html" style="margin-left:auto;font-size:13px">📺 Open Broadcast Wall</a>
 </header>
 <div class="wrap">
+  <div class="card hero">
+    <h2><span class="live"></span>⛓️ ON-CHAIN SETTLEMENT — LIVE on Arc</h2>
+    <div class="oc-hero">
+      <div class="big" id="oc-usdc">$0.00</div><div class="lbl">USDC settled on-chain</div>
+    </div>
+    <div class="ocstats">
+      <div><div class="big sub-stat" id="oc-count">0</div><div class="lbl sub-stat">transactions</div></div>
+      <div><div class="big sub-stat" id="oc-agents">0</div><div class="lbl sub-stat">robot agents</div></div>
+    </div>
+    <div id="onchain"><span class="addr">waiting for the first settlement…</span></div>
+  </div>
+
+  <div class="card brain">
+    <h2>🧠 LIVE AGENT REASONING — on-device LLM (gemma3) negotiating</h2>
+    <div class="minds">
+      <div class="mind guard"><div class="who">🤠 guard.rover.eth · seller/auctioneer</div><div id="mind-guard"></div></div>
+      <div class="mind courier"><div class="who">🤖 courier.rover.eth · buyer</div><div id="mind-courier"></div></div>
+    </div>
+  </div>
+
   <div class="card">
     <h2>Fleet</h2>
     <div id="fleet">loading…</div>
+  </div>
+
+  <div class="card">
+    <h2>🔐 Proof of Action — pulled from Walrus</h2>
+    <div id="proof"><span class="addr">no proof yet</span></div>
   </div>
 
   <div class="card">
@@ -58,12 +128,17 @@
   </div>
 
   <div class="card">
+    <h2>📈 Adaptive Learning — seller learns demand</h2>
+    <div id="learning">—</div>
+  </div>
+
+  <div class="card">
     <h2>🏆 ERC-8004 Reputation (live flywheel)</h2>
     <div id="rep">—</div>
   </div>
 
   <div class="card">
-    <h2>On-Chain (Arc testnet)</h2>
+    <h2>⚙️ Network &amp; Contracts</h2>
     <div class="kv"><span>EventPass NFT</span><span class="v" id="eventpass">—</span></div>
     <div class="kv"><span>Chain</span><span class="v" id="chain">—</span></div>
     <div class="kv"><span>Explorer</span><span class="v"><a id="explorer" target="_blank">arcscan</a></span></div>
@@ -74,9 +149,9 @@
     <h2>📹 Live Feeds</h2>
     <div style="display:flex; gap:12px; flex-wrap:wrap">
       <div><div class="addr">guard.rover.eth</div>
-        <img id="feed-guard" style="width:340px; max-width:46vw; border-radius:8px; background:#000" /></div>
+        <img id="feed-guard" onerror="this.style.visibility='hidden'" style="width:340px; max-width:46vw; border-radius:8px; background:#000" /></div>
       <div><div class="addr">courier.rover.eth</div>
-        <img id="feed-courier" style="width:340px; max-width:46vw; border-radius:8px; background:#000" /></div>
+        <img id="feed-courier" onerror="this.style.visibility='hidden'" style="width:340px; max-width:46vw; border-radius:8px; background:#000" /></div>
     </div>
   </div>
 
@@ -90,11 +165,6 @@
       <button id="run">▶ Run live auction + settle on-chain</button>
       <button id="run-voice" class="btn-tx">🔊 Auction (speakers only)</button>
     </div>
-  </div>
-
-  <div class="card full">
-    <h2>⛓️ On-Chain Settlement (live, Arc)</h2>
-    <div id="onchain"><span class="addr">waiting for the first settlement…</span></div>
   </div>
 
   <div class="card full">
@@ -114,10 +184,12 @@ async function poll() {
     $("chain").textContent = s.arc.chainId;
     $("explorer").href = s.arc.explorer;
     $("eventpass").textContent = s.eventPass || "not deployed yet";
+    $("oc-agents").textContent = Object.keys(s.robots).length;
     let html = "";
     for (const [name, r] of Object.entries(s.robots)) {
       const up = r.ok;
-      const batt = (r.battery_v ?? 0).toFixed ? r.battery_v.toFixed(2) : r.battery_v;
+      const bv = r.battery_v;
+      const batt = (typeof bv === "number") ? bv.toFixed(2) : (bv ?? "—");
       html += `<div class="robot">
         <div class="dot ${up?'up':''}"></div>
         <div class="meta">
@@ -131,7 +203,8 @@ async function poll() {
     // wire live feeds once (avoid resetting the MJPEG stream each poll)
     for (const [name, r] of Object.entries(s.robots)) {
       const img = $("feed-" + name);
-      if (img && r.url && !img.src.includes("/stream")) img.src = r.url + "/stream";
+      const src = r.feed || (r.url ? r.url + "/stream" : null);
+      if (img && src && !img.src.endsWith(src)) img.src = src;
     }
     if (s.race && s.race.status) {
       $("auction-status").textContent = "race: " + s.race.status +
@@ -141,22 +214,27 @@ async function poll() {
       const f = s.ens, row = (label, r) => {
         const ok = r && r.resolved;
         return `<div class="kv"><span>${(r&&r.name)||label}</span>
-          <span class="v">${ok ? '<b style="color:var(--grn)">'+r.address.slice(0,8)+'…</b> ✓ ENSIP-25'
+          <span class="v">${ok && r.address ? '<b style="color:var(--grn)">'+r.address.slice(0,8)+'…</b> ✓ ENSIP-25'
             : '<span style="color:var(--dim)">unresolved ('+f.chain+')</span>'}</span></div>`;
       };
       $("ens").innerHTML = `<div class="kv"><span>parent</span><span class="v">${f.parent} · ${f.chain}</span></div>`
         + row("guard", f.guard) + row("courier", f.courier);
     }
-    try {
-      const rep = await (await fetch("/reputation")).json();
-      let rh = "";
-      for (const [name, r] of Object.entries(rep)) {
-        rh += `<div class="kv"><span>${r.ens||name}</span>
-          <span class="v">${r.count||0} reviews · avg <b style="color:var(--gold)">${r.avg||0}</b></span></div>`;
-      }
-      $("rep").innerHTML = rh;
-    } catch {}
-  } catch (e) { log("poll error: " + e.message); }
+  } catch (e) {
+    log("poll error: " + e.message);
+    $("fleet").innerHTML = '<div class="robot"><div class="dot"></div><div class="meta"><div class="addr">fleet offline · retrying</div></div></div>';
+  }
+}
+async function pollRep(){
+  try {
+    const rep = await (await fetch("/reputation")).json();
+    let rh = "";
+    for (const [name, r] of Object.entries(rep)) {
+      rh += `<div class="kv"><span>${r.ens||name}</span>
+        <span class="v">${r.count||0} reviews · avg <b style="color:var(--gold)">${r.avg||0}</b></span></div>`;
+    }
+    $("rep").innerHTML = rh;
+  } catch {}
 }
 
 async function runAuction(withSettle) {
@@ -197,17 +275,72 @@ async function pollOnchain(){
   try {
     const f = await (await fetch("/onchain/feed")).json();
     const ex = $("explorer").href.replace(/\/$/,'');
+    if (typeof f.settledUsdc === "number") {
+      const el = $("oc-usdc");
+      el.textContent = "$" + f.settledUsdc.toFixed(2);
+      el.style.color = f.settledUsdc > 0 ? "var(--grn)" : "var(--dim)";
+    }
+    if (typeof f.count === "number") $("oc-count").textContent = f.count;
     if (!f.events || !f.events.length) return;
     $("onchain").innerHTML = f.events.map(e => {
-      const ts = new Date(e.t).toLocaleTimeString();
-      const link = e.tx ? `<a target="_blank" href="${ex}/tx/${e.tx}">${e.tx.slice(0,12)}…</a>` : '<span class="addr">pending</span>';
-      const tag = {PAY:'#3fb950',MINT:'#58a6ff',REPUTATION:'#d8a657',BET:'#bc8cff','RACE SETTLE':'#3fb950'}[e.kind]||'#7d8aa0';
-      return `<div class="kv"><span><b style="color:${tag}">${e.kind}</b> <span class="addr">${e.detail}</span></span><span class="v">${link}</span></div>`;
+      const secs = Math.max(0, Math.round((Date.now() - e.t)/1000));
+      const ts = secs < 60 ? `${secs}s ago` : `${Math.round(secs/60)}m ago`;
+      const link = e.tx ? `<a target="_blank" href="${ex}/tx/${e.tx}">${e.tx.slice(0,10)}…↗</a>` : '<span class="addr">pending</span>';
+      const c = {PAY:'#3fb950',MINT:'#58a6ff',REPUTATION:'#d8a657',BET:'#bc8cff','RACE SETTLE':'#3fb950'}[e.kind]||'#7d8aa0';
+      return `<div class="oc">
+        <span class="tag" style="color:${c};background:${c}33">${e.kind}</span>
+        <span class="det">${e.detail}</span>
+        <span class="tx">${link}<div class="ts">${ts}</div></span></div>`;
     }).join("");
   } catch {}
 }
+async function pollReason(){
+  try {
+    const f = await (await fetch("/reason/feed")).json();
+    if (!f.events) return;
+    for (const robot of ["guard","courier"]) {
+      const evs = f.events.filter(e => e.robot === robot).slice(0, 12);
+      $("mind-"+robot).innerHTML = evs.length ? evs.map((e,i) =>
+        `<div class="th ${e.kind}">${i===0?'<span class="cursor"></span> ':''}<span class="ph">${e.phase}</span> ${e.text}</div>`
+      ).join("") : '<div class="th" style="color:var(--dim)">idle…</div>';
+    }
+  } catch {}
+}
+async function pollProof(){
+  try {
+    const r = await (await fetch("/proof/latest")).json();
+    if (!r.proof || !r.url) return;
+    const p = r.proof;
+    if ($("proof").dataset.blob === p.blobId) return;  // only redraw on change
+    $("proof").dataset.blob = p.blobId;
+    $("proof").innerHTML =
+      `<img src="${r.url}" onerror="this.style.visibility='hidden'" style="width:100%;max-width:360px;border-radius:8px;background:#000" />
+       <div class="kv"><span>${p.label||'proof'}</span><span class="v">⛓ Walrus</span></div>
+       <div class="kv"><span class="addr">blobId</span><span class="v"><a target="_blank" href="${r.url}">${p.blobId.slice(0,16)}…</a></span></div>
+       <div class="kv"><span class="addr">sha256</span><span class="v" style="color:var(--grn)">${(p.sha256||'').slice(0,16)}… ✓</span></div>`;
+  } catch {}
+}
 poll(); setInterval(poll, 4000);
+pollRep(); setInterval(pollRep, 4000);
 pollOnchain(); setInterval(pollOnchain, 3000);
+pollReason(); setInterval(pollReason, 1500);
+pollProof(); setInterval(pollProof, 3000);
+async function pollLearning(){
+  try {
+    const d = await (await fetch("/learning")).json();
+    if (typeof d.demand !== "number") return;
+    const pct = Math.round(d.demand*100);
+    const col = d.demand>0.6?'var(--grn)':d.demand<0.4?'var(--gold)':'var(--blu)';
+    const hist = (d.history||[]).slice(0,6).map(o =>
+      `<span style="color:${o.sold?'var(--grn)':'var(--dim)'}">${o.sold && typeof o.price==="number" ? '$'+o.price.toFixed(2) : (o.sold?'sold':'unsold')}</span>`).join(" · ");
+    $("learning").innerHTML =
+      `<div style="font-size:30px;font-weight:800;color:${col}">demand ${d.demand.toFixed(2)}</div>
+       <div class="ocstats" style="padding:6px 0"><div style="width:100%;height:8px;background:#0a0e14;border-radius:4px;overflow:hidden"><div style="width:${pct}%;height:100%;background:${col}"></div></div></div>
+       <div class="addr" style="margin:6px 0">${d.note||''}</div>
+       <div class="kv"><span class="addr">recent outcomes</span><span class="v">${hist}</span></div>`;
+  } catch {}
+}
+pollLearning(); setInterval(pollLearning, 3000);
 </script>
 </body>
 </html>

@@ -31,6 +31,7 @@
     "@ledgerhq/device-management-kit": "^1.6.0",
     "@ledgerhq/device-signer-kit-ethereum": "^1.16.0",
     "@ledgerhq/device-transport-kit-web-hid": "^1.2.3",
+    "@ledgerhq/device-transport-kit-web-ble": "^1.2.3",
     "@privy-io/node": "latest",
     "@x402/core": "^2.15.0",
     "@x402/evm": "^2.15.0",

@@ -1,0 +1,455 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>FLEET COMMAND // THE ONCHAIN ROVER</title>
+<style>
+  :root{
+    --void:#070604; --void2:#0c0a07; --panel:rgba(22,17,11,.55);
+    --amber:#e8a44c; --amber-d:#b97a2c; --amber-dim:#6e5430;
+    --teal:#52d6c4; --red:#ff5a48; --txt:#f0e6d6; --dim:#8a7a64;
+    --line:rgba(232,164,76,.18); --glow:rgba(232,164,76,.35);
+  }
+  *{box-sizing:border-box; margin:0;}
+  html,body{height:100%; background:var(--void); color:var(--txt); overflow:hidden;
+    font-family:ui-monospace,"SF Mono",Menlo,monospace; letter-spacing:.04em;
+    -webkit-font-smoothing:antialiased;}
+
+  /* ---- atmosphere layers ---- */
+  #grain{position:fixed; inset:0; z-index:90; pointer-events:none; opacity:.05; mix-blend-mode:overlay;}
+  #vignette{position:fixed; inset:0; z-index:91; pointer-events:none;
+    background:radial-gradient(ellipse 120% 90% at 50% 42%, transparent 38%, rgba(0,0,0,.55) 78%, #000 100%);}
+  #scan{position:fixed; inset:0; z-index:92; pointer-events:none; opacity:.5;
+    background:repeating-linear-gradient(0deg, transparent 0 2px, rgba(0,0,0,.16) 3px 4px);}
+  #sweep{position:fixed; left:0; right:0; height:34vh; z-index:93; pointer-events:none;
+    background:linear-gradient(180deg, transparent, rgba(232,164,76,.05) 45%, transparent);
+    animation:scanmove 9s linear infinite;}
+  @keyframes scanmove{0%{top:-34vh}100%{top:100vh}}
+  body::before{content:""; position:fixed; inset:0; z-index:1; pointer-events:none;
+    background:
+      radial-gradient(60% 50% at 78% 18%, rgba(232,164,76,.10), transparent 70%),
+      radial-gradient(70% 60% at 12% 88%, rgba(82,214,196,.05), transparent 70%),
+      radial-gradient(90% 70% at 50% 50%, rgba(28,20,12,.9), var(--void) 80%);
+    animation:breathe 14s ease-in-out infinite;}
+  @keyframes breathe{0%,100%{opacity:.85}50%{opacity:1}}
+  @keyframes flick{0%,97%,100%{opacity:1}98%{opacity:.86}99%{opacity:.95}}
+
+  /* ---- structural grid ---- */
+  .stage{position:relative; z-index:5; height:100vh; display:grid;
+    grid-template-rows:auto auto 1fr auto; padding:clamp(14px,1.6vw,30px); gap:clamp(10px,1vw,18px);
+    animation:flick 7s infinite;}
+
+  /* ---- header ---- */
+  .head{display:grid; grid-template-columns:1fr auto; align-items:end; gap:20px;}
+  .brand .ttl{font-size:clamp(26px,3.4vw,62px); font-weight:200; letter-spacing:.16em; line-height:.95;
+    color:var(--txt); position:relative; text-shadow:0 0 30px var(--glow);}
+  .brand .ttl b{font-weight:600; color:var(--amber);}
+  .brand .ttl::after{content:"THE ONCHAIN ROVER"; position:absolute; left:1.5px; top:0;
+    color:var(--teal); opacity:.35; mix-blend-mode:screen; clip-path:inset(0 0 55% 0);} /* chromatic split */
+  .brand .jp{color:var(--amber-dim); font-size:clamp(11px,1vw,16px); letter-spacing:.5em; margin-top:8px;}
+  .brand .sys{color:var(--dim); font-size:clamp(9px,.78vw,12px); letter-spacing:.28em; margin-top:9px; text-transform:uppercase;}
+  .brand .sys span{color:var(--teal);}
+  .hero{text-align:right;}
+  .hero .n{font-size:clamp(42px,6.2vw,118px); font-weight:200; color:var(--amber); line-height:.82;
+    text-shadow:0 0 44px var(--glow); letter-spacing:-.02em;}
+  .hero .lbl{font-size:clamp(9px,.8vw,13px); color:var(--dim); letter-spacing:.34em; text-transform:uppercase; margin-top:10px;}
+  .hero .lbl em{color:var(--amber); font-style:normal;}
+  .livedot{display:inline-block; width:9px; height:9px; border-radius:50%; background:var(--red);
+    box-shadow:0 0 12px var(--red); animation:pulse 1.2s infinite; vertical-align:middle; margin-right:8px;}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.25}}
+
+  /* ---- sponsor ignition rail ---- */
+  .rail{display:flex; gap:clamp(6px,.7vw,14px); flex-wrap:wrap;}
+  .chip{font-size:clamp(8px,.72vw,11px); letter-spacing:.18em; text-transform:uppercase; padding:5px 12px;
+    border:1px solid var(--amber-dim); border-radius:2px; color:var(--amber-dim); opacity:.4; transition:.6s;
+    position:relative;}
+  .chip.lit{opacity:1; color:var(--amber); border-color:var(--amber); box-shadow:0 0 14px var(--glow), inset 0 0 10px rgba(232,164,76,.08);}
+
+  /* ---- main 3-col ---- */
+  .cols{display:grid; grid-template-columns:1.05fr 1.25fr 1.05fr; gap:clamp(10px,1vw,18px); min-height:0;}
+  .col{display:flex; flex-direction:column; gap:clamp(10px,1vw,18px); min-height:0;}
+  .panel{position:relative; background:var(--panel); border:1px solid var(--line); border-radius:3px;
+    padding:clamp(10px,.95vw,18px); min-height:0; display:flex; flex-direction:column;
+    backdrop-filter:blur(2px); box-shadow:inset 0 0 60px rgba(0,0,0,.5);}
+  .panel::before,.panel::after{content:""; position:absolute; width:14px; height:14px; border:1px solid var(--amber); opacity:.55;}
+  .panel::before{top:-1px; left:-1px; border-right:0; border-bottom:0;}
+  .panel::after{bottom:-1px; right:-1px; border-left:0; border-top:0;}
+  .ph{font-size:clamp(9px,.78vw,12px); letter-spacing:.3em; text-transform:uppercase; color:var(--amber-d);
+    margin-bottom:10px; display:flex; align-items:center; gap:9px; white-space:nowrap;}
+  .ph .id{margin-left:auto; color:var(--dim); letter-spacing:.18em;}
+  .grow{flex:1; overflow:hidden; min-height:0;}
+
+  /* ---- agent dossier ---- */
+  .agent{flex:1; min-height:0;}
+  .feedwrap{position:relative; border:1px solid var(--line); border-radius:2px; overflow:hidden; background:#000;
+    aspect-ratio:16/10;}
+  .feedwrap img{width:100%; height:100%; object-fit:cover; display:block; filter:contrast(1.08) saturate(.85) brightness(.92);}
+  .feedwrap .corners i{position:absolute; width:18px; height:18px; border:1.5px solid var(--amber); opacity:.8;}
+  .feedwrap .corners i:nth-child(1){top:6px;left:6px;border-right:0;border-bottom:0;}
+  .feedwrap .corners i:nth-child(2){top:6px;right:6px;border-left:0;border-bottom:0;}
+  .feedwrap .corners i:nth-child(3){bottom:6px;left:6px;border-right:0;border-top:0;}
+  .feedwrap .corners i:nth-child(4){bottom:6px;right:6px;border-left:0;border-top:0;}
+  .feedwrap .scanline{position:absolute; left:0; right:0; height:2px; background:linear-gradient(90deg,transparent,var(--amber),transparent);
+    opacity:.7; animation:vscan 3.4s linear infinite;}
+  @keyframes vscan{0%{top:0}100%{top:100%}}
+  .feedwrap .tag{position:absolute; top:8px; left:30px; font-size:10px; letter-spacing:.22em; color:var(--amber);
+    text-shadow:0 0 8px #000;}
+  .feedwrap.off img{display:none;}
+  .feedwrap.off::after{content:"◢ SIGNAL LOST"; position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+    color:var(--red); letter-spacing:.3em; font-size:13px; text-shadow:0 0 12px var(--red);
+    background:repeating-linear-gradient(0deg,rgba(255,90,72,.04) 0 2px,transparent 2px 4px);}
+  .dossier{display:grid; grid-template-columns:1fr auto; gap:6px 12px; margin-top:10px; align-items:center;}
+  .callsign{font-size:clamp(13px,1.15vw,19px); color:var(--amber); letter-spacing:.1em;}
+  .meta{font-size:clamp(8px,.72vw,11px); color:var(--dim); letter-spacing:.16em; text-transform:uppercase;}
+  .vit{display:flex; gap:3px; justify-content:flex-end;}
+  .vit i{width:5px; height:16px; background:var(--amber-dim); border-radius:1px;}
+  .vit i.on{background:var(--amber); box-shadow:0 0 6px var(--glow);}
+  .vit i.lo{background:var(--red); box-shadow:0 0 6px var(--red);}
+  .wallet{grid-column:1/-1; font-size:clamp(8px,.7vw,11px); color:var(--amber-dim); letter-spacing:.1em; word-break:break-all;}
+
+  /* ---- cognition stream ---- */
+  .wave{display:flex; align-items:flex-end; gap:3px; height:26px; margin-bottom:10px;}
+  .wave i{flex:1; background:linear-gradient(180deg,var(--amber),var(--amber-dim)); border-radius:1px; opacity:.65;
+    animation:eq 1.1s ease-in-out infinite;}
+  @keyframes eq{0%,100%{height:18%}50%{height:90%}}
+  .mind{flex:1; overflow:hidden; display:flex; flex-direction:column-reverse; gap:2px;}
+  .th{font-size:clamp(11px,1vw,16px); line-height:1.5; padding:7px 0 7px 14px; border-left:2px solid var(--amber-dim);
+    animation:slidein .35s ease; color:var(--txt);}
+  @keyframes slidein{from{opacity:0; transform:translateX(-8px)}to{opacity:1}}
+  .th .who{font-size:9px; letter-spacing:.2em; text-transform:uppercase; color:var(--amber-d); margin-right:8px;}
+  .th .pz{font-size:9px; letter-spacing:.16em; text-transform:uppercase; color:var(--dim);}
+  .th.decision{border-left-color:var(--teal); color:#fff;}
+  .th.decision .who{color:var(--teal);}
+  .th.offer{border-left-color:var(--amber);}
+  .th.plan{border-left-color:var(--amber-dim); color:var(--dim);}
+  .th .cur{display:inline-block; width:8px; height:14px; background:var(--amber); margin-right:6px; vertical-align:middle;
+    animation:pulse 1s infinite;}
+  .acoustic{margin-top:10px; border-top:1px solid var(--line); padding-top:10px;}
+  .acoustic .ph{margin-bottom:7px;}
+  .gbars{display:flex; align-items:center; gap:2px; height:20px;}
+  .gbars i{flex:1; background:var(--teal); opacity:.5; border-radius:1px; animation:eq 1.6s ease-in-out infinite;}
+
+  /* ---- ledger ticker ---- */
+  .oc{display:grid; grid-template-columns:auto 1fr auto; gap:9px; align-items:center; padding:7px 0;
+    border-bottom:1px solid var(--line); font-size:clamp(10px,.85vw,14px); animation:slidein .35s ease;}
+  .oc .k{font-size:9px; letter-spacing:.14em; padding:3px 7px; border:1px solid currentColor; border-radius:2px; text-align:center;}
+  .oc .d{color:var(--txt); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .oc a{color:var(--teal); text-decoration:none; font-size:11px;}
+  .oc .ts{color:var(--dim); font-size:9px;}
+
+  /* ---- holo dials ---- */
+  .dials{display:grid; grid-template-columns:1fr 1fr; gap:12px;}
+  .dial{text-align:center; position:relative;}
+  .dial svg{width:100%; max-height:128px;}
+  .dial .val{font-size:clamp(16px,1.6vw,26px); color:var(--amber); letter-spacing:.04em;}
+  .dial .cap{font-size:9px; letter-spacing:.24em; color:var(--dim); text-transform:uppercase; margin-top:2px;}
+  .ring-track{fill:none; stroke:var(--amber-dim); stroke-opacity:.25; stroke-width:6;}
+  .ring-val{fill:none; stroke:var(--amber); stroke-width:6; stroke-linecap:round;
+    filter:drop-shadow(0 0 6px var(--glow)); transition:stroke-dasharray .8s ease, stroke .6s;}
+  .ring-sweep{transform-origin:50% 50%; animation:spin 4s linear infinite;}
+  @keyframes spin{to{transform:rotate(360deg)}}
+
+  /* ---- proof plate ---- */
+  .proof{position:relative;}
+  .proof .plate{position:relative; border:1px solid var(--line); border-radius:2px; overflow:hidden; background:#000;}
+  .proof img{width:100%; display:block; filter:contrast(1.05) saturate(.8);}
+  .proof .holo{position:absolute; inset:0; background:linear-gradient(115deg,transparent 30%,rgba(82,214,196,.12) 50%,transparent 70%);
+    background-size:300% 300%; animation:holo 5s linear infinite; pointer-events:none;}
+  @keyframes holo{0%{background-position:0% 0%}100%{background-position:300% 300%}}
+  .proof .hash{font-size:clamp(8px,.72vw,11px); color:var(--teal); letter-spacing:.08em; margin-top:7px; word-break:break-all;}
+  .proof .hash b{color:var(--amber);}
+  .proof .ok{color:var(--teal);}
+  .empty{color:var(--dim); font-size:11px; letter-spacing:.2em; text-transform:uppercase; padding:20px 0; text-align:center;}
+
+  /* ---- bottom marquee ---- */
+  .ticker{border-top:1px solid var(--line); padding-top:10px; overflow:hidden; white-space:nowrap;}
+  .ticker .run{display:inline-block; animation:run 38s linear infinite; color:var(--dim); font-size:clamp(10px,.85vw,13px);
+    letter-spacing:.22em; text-transform:uppercase;}
+  .ticker .run b{color:var(--amber);} .ticker .run em{color:var(--teal); font-style:normal;}
+  @keyframes run{from{transform:translateX(40vw)}to{transform:translateX(-100%)}}
+
+  /* ---- boot overlay ---- */
+  #boot{position:fixed; inset:0; z-index:200; background:var(--void); display:flex; flex-direction:column;
+    align-items:center; justify-content:center; gap:18px; transition:opacity 1s; letter-spacing:.3em;}
+  #boot .bl{color:var(--amber); font-size:14px; min-height:20px;}
+  #boot .bigboot{font-size:clamp(20px,3vw,48px); font-weight:200; color:var(--txt); letter-spacing:.2em;}
+  #boot.gone{opacity:0; pointer-events:none;}
+</style>
+</head>
+<body>
+<canvas id="grain"></canvas>
+<div id="vignette"></div><div id="scan"></div><div id="sweep"></div>
+
+<div id="boot">
+  <div class="bigboot">FLEET&nbsp;COMMAND</div>
+  <div class="bl" id="bootline">INITIALIZING UPLINK…</div>
+</div>
+
+<div class="stage">
+  <!-- HEADER -->
+  <div class="head">
+    <div class="brand">
+      <div class="ttl">THE <b>ONCHAIN</b> ROVER</div>
+      <div class="jp">オンチェーン・ローバー　艦隊指令</div>
+      <div class="sys">NODES <span id="nodes">0</span>/2 · ARC CHAIN <span id="chain">—</span> · LOCAL TIME <span id="clock">—</span></div>
+    </div>
+    <div class="hero">
+      <div class="n" id="settled">$0.00</div>
+      <div class="lbl"><span class="livedot"></span><em id="txcount">0</em> SETTLEMENTS · USDC ON ARC</div>
+    </div>
+  </div>
+
+  <!-- SPONSOR IGNITION -->
+  <div class="rail" id="rail">
+    <span class="chip" id="b-arc">Arc · x402</span>
+    <span class="chip" id="b-walrus">Walrus</span>
+    <span class="chip" id="b-ens">ENS</span>
+    <span class="chip" id="b-world">World ID</span>
+    <span class="chip" id="b-gemma">gemma3 · on-device</span>
+    <span class="chip" id="b-8004">ERC-8004</span>
+    <span class="chip" id="b-ledger">Ledger</span>
+    <span class="chip" id="b-cre">Chainlink CRE</span>
+    <span class="chip" id="b-privy">Privy custody</span>
+    <span class="chip" id="b-bq">BigQuery</span>
+  </div>
+
+  <!-- MAIN -->
+  <div class="cols">
+    <!-- LEFT: agent dossiers -->
+    <div class="col">
+      <div class="panel agent">
+        <div class="ph">◢ AGENT DOSSIER<span class="id">UNIT-00</span></div>
+        <div class="feedwrap off" id="wrap-guard">
+          <div class="corners"><i></i><i></i><i></i><i></i></div>
+          <span class="scanline"></span><span class="tag">CAM·GUARD</span>
+          <img id="feed-guard" onerror="this.closest('.feedwrap').classList.add('off')" />
+        </div>
+        <div class="dossier">
+          <div class="callsign" id="cs-guard">guard.rover.eth</div>
+          <div class="vit" id="vit-guard"></div>
+          <div class="meta" id="role-guard">SELLER · AUCTIONEER</div>
+          <div class="meta" id="bat-guard" style="text-align:right">—V</div>
+          <div class="wallet" id="wal-guard"></div>
+        </div>
+      </div>
+      <div class="panel agent">
+        <div class="ph">◢ AGENT DOSSIER<span class="id">UNIT-01</span></div>
+        <div class="feedwrap off" id="wrap-courier">
+          <div class="corners"><i></i><i></i><i></i><i></i></div>
+          <span class="scanline"></span><span class="tag">CAM·COURIER</span>
+          <img id="feed-courier" onerror="this.closest('.feedwrap').classList.add('off')" />
+        </div>
+        <div class="dossier">
+          <div class="callsign" id="cs-courier">courier.rover.eth</div>
+          <div class="vit" id="vit-courier"></div>
+          <div class="meta" id="role-courier">BUYER · COURIER</div>
+          <div class="meta" id="bat-courier" style="text-align:right">—V</div>
+          <div class="wallet" id="wal-courier"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- CENTER: cognition -->
+    <div class="col">
+      <div class="panel" style="flex:1">
+        <div class="ph">◢ COGNITION · ON-DEVICE GEMMA3<span class="id">0 CLOUD CALLS</span></div>
+        <div class="wave" id="wave"></div>
+        <div class="mind grow" id="mind"></div>
+        <div class="acoustic">
+          <div class="ph">◢ ACOUSTIC LINK · GIBBERLINK<span class="id">GGWAVE 0.9–1.1 kHz</span></div>
+          <div class="gbars" id="gbars"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- RIGHT: ledger + dials + proof -->
+    <div class="col">
+      <div class="panel" style="flex:1.1">
+        <div class="ph">◢ SETTLEMENT LEDGER · ARC<span class="id">CHAIN 5042002</span></div>
+        <div class="grow" id="ledger"><div class="empty">awaiting settlement…</div></div>
+      </div>
+      <div class="panel" style="flex:none">
+        <div class="ph">◢ TELEMETRY</div>
+        <div class="dials">
+          <div class="dial">
+            <svg viewBox="0 0 120 120">
+              <circle class="ring-track" cx="60" cy="60" r="48"/>
+              <circle class="ring-val" id="ring-demand" cx="60" cy="60" r="48" transform="rotate(-90 60 60)" stroke-dasharray="0 302"/>
+              <line class="ring-sweep" x1="60" y1="60" x2="60" y2="16" stroke="var(--amber)" stroke-width="1.5" opacity=".5"/>
+            </svg>
+            <div class="val" id="demand-val">—</div><div class="cap">MARKET DEMAND</div>
+          </div>
+          <div class="dial">
+            <svg viewBox="0 0 120 120">
+              <circle class="ring-track" cx="60" cy="60" r="48"/>
+              <circle class="ring-val" id="ring-rep" cx="60" cy="60" r="48" transform="rotate(-90 60 60)" stroke-dasharray="0 302" style="stroke:var(--teal)"/>
+              <line class="ring-sweep" x1="60" y1="60" x2="60" y2="16" stroke="var(--teal)" stroke-width="1.5" opacity=".5" style="animation-duration:5.5s"/>
+            </svg>
+            <div class="val" id="rep-val" style="color:var(--teal)">—</div><div class="cap">REPUTATION · 8004</div>
+          </div>
+        </div>
+        <div class="dim" id="bq-net" style="margin-top:8px;font-size:11px"></div>
+      </div>
+      <div class="panel proof" style="flex:none">
+        <div class="ph">◢ PROOF OF ACTION · WALRUS<span class="id" id="proof-id">—</span></div>
+        <div id="proof"><div class="empty">no proof recorded</div></div>
+      </div>
+      <div class="panel" style="flex:none;border:1px solid #3a5a8a">
+        <div class="ph">◢ ORACLE VERIFICATION · CHAINLINK CRE<span class="id" id="cre-id">DON consensus</span></div>
+        <div id="cre"><div class="empty">awaiting decentralized verification…</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- TICKER -->
+  <div class="ticker"><div class="run">
+    THE ONCHAIN ROVER — PHYSICAL AGENTS YOU HIRE OVER HTTP &nbsp;·&nbsp; <b>REASON</b> ON-DEVICE &nbsp;·&nbsp; <b>SETTLE</b> ON ARC &nbsp;·&nbsp; <b>PROVE</b> ON WALRUS &nbsp;·&nbsp; <b>GOVERN</b> WITH LEDGER &nbsp;·&nbsp; <em>ENS-NAMED</em> · <em>WORLD-ID GATED</em> · <em>ERC-8004 REPUTATION</em> &nbsp;·&nbsp; ETHGLOBAL NEW YORK 2026 &nbsp;·&nbsp;&nbsp;&nbsp;
+  </div></div>
+</div>
+
+<script>
+const $=(id)=>document.getElementById(id), ex0="https://testnet.arcscan.app";
+let ex=ex0, lastCount=0;
+async function j(u){ try{ return await (await fetch(u)).json(); }catch{ return null; } }
+
+// build static bars
+(function(){
+  const w=$("wave"); for(let i=0;i<46;i++){const b=document.createElement("i"); b.style.animationDelay=(i*0.045)+"s"; b.style.animationDuration=(0.7+Math.abs(Math.sin(i))*0.9)+"s"; w.appendChild(b);}
+  const g=$("gbars"); for(let i=0;i<60;i++){const b=document.createElement("i"); b.style.animationDelay=(i*0.03)+"s"; b.style.height=(15+Math.abs(Math.sin(i*1.7))*30)+"%"; g.appendChild(b);}
+})();
+
+// film grain
+(function(){
+  const c=$("grain"), x=c.getContext("2d"); let W,H;
+  function size(){ W=c.width=Math.floor(innerWidth/2); H=c.height=Math.floor(innerHeight/2); }
+  size(); addEventListener("resize",size);
+  let n=0;
+  function draw(){ n++; if(n%4===0){ const img=x.createImageData(W,H), d=img.data;
+    for(let i=0;i<d.length;i+=4){ const v=(Math.random()*255)|0; d[i]=d[i+1]=d[i+2]=v; d[i+3]=255; } x.putImageData(img,0,0);}
+    requestAnimationFrame(draw); }
+  draw();
+})();
+
+// clock
+function clk(){ const t=new Date(); $("clock").textContent=t.toTimeString().slice(0,8); }
+clk(); setInterval(clk,1000);
+
+function dash(pct, circ){ const len=2*Math.PI*48; const on=Math.max(0,Math.min(1,pct))*len; return on+" "+(len-on); }
+function vitbars(el, frac, lo){ let h=""; for(let i=0;i<6;i++){ const on=i < Math.round(frac*6); h+=`<i class="${on?(lo?'lo':'on'):''}"></i>`; } el.innerHTML=h; }
+
+async function tick(){
+  const s=await j("/status");
+  if(s){
+    ex=(s.arc&&s.arc.explorer)||ex0;
+    if(s.arc) $("chain").textContent=s.arc.chainId||"—";
+    let live=0;
+    for(const n of ["guard","courier"]){
+      const r=s.robots&&s.robots[n]; const wrap=$("wrap-"+n), img=$("feed-"+n);
+      if(r){
+        if(r.ens) $("cs-"+n).textContent=r.ens;
+        if(r.role) $("role-"+n).textContent=(r.role==="guard"?"SELLER · AUCTIONEER":"BUYER · COURIER");
+        const src=r.feed||(r.url?r.url+"/stream":null);
+        if(r.ok && src){ live++; wrap.classList.remove("off"); if(img&&!img.src.endsWith(src)) img.src=src; }
+        else { wrap.classList.add("off"); }
+        const bv=typeof r.battery_v==="number"?r.battery_v:0;
+        $("bat-"+n).textContent=r.ok?bv.toFixed(2)+"V":"OFFLINE";
+        const frac=Math.max(0,Math.min(1,(bv-9)/(12.6-9))); // 9V empty, 12.6 full
+        vitbars($("vit-"+n), r.ok?frac:0, bv>0&&bv<10);
+        if(r.wallet) $("wal-"+n).textContent=r.wallet;
+      } else { wrap.classList.add("off"); }
+    }
+    $("nodes").textContent=live;
+    if(s.ens&&s.ens.courier&&s.ens.courier.resolved) $("b-ens").classList.add("lit");
+  }
+
+  const f=await j("/onchain/feed");
+  if(f){
+    if(typeof f.settledUsdc==="number"){ const el=$("settled"); el.textContent="$"+f.settledUsdc.toFixed(2);
+      el.style.color=f.settledUsdc>0?"var(--amber)":"#5a4a30"; }
+    if(typeof f.count==="number"){ $("txcount").textContent=f.count;
+      if(f.count>lastCount&&lastCount>0){ try{$("settled").animate([{filter:'brightness(2.4)'},{filter:'brightness(1)'}],{duration:700});}catch{} }
+      lastCount=f.count; if(f.count>0) $("b-arc").classList.add("lit"); }
+    if(f.events&&f.events.length){
+      $("ledger").innerHTML=f.events.slice(0,9).map(e=>{
+        const secs=Math.max(0,Math.round((Date.now()-e.t)/1000)), ts=secs<60?secs+"s":Math.round(secs/60)+"m";
+        const c={PAY:'#e8a44c',MINT:'#52d6c4',REPUTATION:'#b97a2c',BET:'#a98cff','RACE SETTLE':'#52d6c4'}[e.kind]||'#8a7a64';
+        const lk=e.tx?`<a target=_blank href="${ex}/tx/${e.tx}">${e.tx.slice(0,8)}…↗</a>`:'<span class=ts>pending</span>';
+        return `<div class=oc><span class=k style="color:${c}">${e.kind}</span><span class=d>${e.detail}</span><span>${lk}<div class=ts>${ts} ago</div></span></div>`;
+      }).join("");
+    }
+  }
+
+  const rz=await j("/reason/feed");
+  if(rz&&rz.events&&rz.events.length){
+    $("b-gemma").classList.add("lit");
+    $("mind").innerHTML=rz.events.slice(0,10).map((e,i)=>
+      `<div class="th ${e.kind||''}">${i===0?'<span class="cur"></span>':''}<span class=who>${(e.robot||'').toUpperCase()}</span><span class=pz>${e.phase||''}</span> ${e.text||''}</div>`).join("");
+    // pulse the acoustic bars brighter right after fresh reasoning
+    const g=$("gbars"); g.style.filter="brightness(1.6)"; setTimeout(()=>g.style.filter="",600);
+  }
+
+  const l=await j("/learning");
+  if(l&&typeof l.demand==="number"){
+    $("ring-demand").setAttribute("stroke-dasharray", dash(l.demand, 302));
+    $("ring-demand").style.stroke=l.demand>0.6?'#52d6c4':l.demand<0.4?'#ff5a48':'#e8a44c';
+    $("demand-val").textContent=l.demand.toFixed(2);
+  }
+
+  const rep=await j("/reputation");
+  if(rep){
+    const vals=Object.values(rep).filter(v=>v&&v.count>0);
+    if(vals.length){ $("b-8004").classList.add("lit");
+      const avg=vals.reduce((a,v)=>a+(v.avg||0),0)/vals.length; // 0–100 scale
+      const n=vals.reduce((a,v)=>a+(v.count||0),0);
+      $("rep-val").textContent=Math.round(avg)+"/100";
+      $("ring-rep").setAttribute("stroke-dasharray", dash(avg/100, 302)); }
+  }
+
+  const cr=await j("/cre/latest");
+  if(cr){
+    if(cr.configured && cr.exists){
+      $("b-cre").classList.toggle('lit', cr.verified);
+      const col=cr.verified?'var(--teal)':'var(--red)';
+      const txln=cr.tx?`<div class=kv><span class=dim>writeReport</span><span class=v><a href="${cr.explorer}/tx/${cr.tx}" target=_blank style="color:var(--teal)">${cr.tx.slice(0,10)}…↗</a></span></div>`:'';
+      $("cre").innerHTML=`<div class=kv><span>DON median score</span><span class=big style="color:${col};font-size:22px">${cr.score}/100</span></div>
+        <div class="gauge"><div style="width:${cr.score}%;background:${col}"></div></div>
+        <div class=kv><span class=dim>verdict</span><span class=v style="color:${col}">${cr.verified?'✓ VERIFIED (≥70)':'✗ below threshold'}</span></div>
+        <div class=kv><span class=dim>job</span><span class=v>${cr.job}</span></div>${txln}`;
+    } else if(cr.configured){
+      $("cre").innerHTML=`<div class=kv><span class=dim>job ${cr.job||''}</span><span class=v>consumer live · awaiting report</span></div>`;
+    } else {
+      $("cre").innerHTML=`<div class="empty">consumer not deployed yet</div>`;
+    }
+  }
+  const bqd=await j("/leaderboard/network");
+  if(bqd){ $("b-bq").classList.toggle('lit', !!bqd.configured && !bqd.error);
+    if(bqd.configured && bqd.rows && bqd.rows.length){
+      const top=bqd.rows[0];
+      $("bq-net").innerHTML=`◢ ERC-8004 network (BigQuery): <span style="color:var(--teal)">${bqd.rows.length} agents</span> · top ${top.agent} (${top.feedback} reviews)`;
+    } else if(bqd.configured){ $("bq-net").textContent="◢ ERC-8004 network: querying BigQuery…"; }
+  }
+  const pv=await j("/privy/status");
+  if(pv){ $("b-privy").classList.toggle('lit', !!pv.configured);
+    if(pv.custody==='privy-tee') $("b-privy").textContent='Privy · TEE custody'; }
+  const p=await j("/proof/latest");
+  if(p&&p.proof&&p.url){
+    $("b-walrus").classList.add("lit");
+    $("proof-id").textContent=(p.proof.blobId||"").slice(0,10)+"…";
+    if($("proof").dataset.b!==p.proof.blobId){ $("proof").dataset.b=p.proof.blobId;
+      $("proof").innerHTML=`<div class="plate"><img src="${p.url}"/><div class="holo"></div></div>
+        <div class="hash"><b>${p.proof.label||'proof'}</b></div>
+        <div class="hash">SHA-256 ${(p.proof.sha256||'').slice(0,20)}… <span class="ok">✓ VERIFIED</span></div>`;
+    }
+  }
+}
+
+// boot sequence then run
+const boots=["INITIALIZING UPLINK…","RESOLVING ENS · *.rover.eth","ATTACHING ARC RPC · CHAIN 5042002","WARMING GEMMA3 · ON-DEVICE","FLEET COMMAND ONLINE"];
+let bi=0;
+const bt=setInterval(()=>{ bi++; if(bi<boots.length){ $("bootline").textContent=boots[bi]; }
+  else { clearInterval(bt); $("boot").classList.add("gone"); } }, 520);
+tick(); setInterval(tick, 1800);
+</script>
+</body>
+</html>

@@ -15,6 +15,7 @@ import {
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { ARC, ROBOTS } from "./config.js";
+import * as privy from "./privy.js";
 
 export const arcTestnet = defineChain({
   id: ARC.chainId,
@@ -48,6 +49,19 @@ function wallet(pk: string) {
   });
 }
 
+// Custody router: when CUSTODY=privy and a Privy server wallet is provisioned
+// for this role, sign in Privy's TEE (no local key on the host); otherwise use
+// the local key. Non-breaking — defaults to local.
+function walletFor(role: string) {
+  if (process.env.CUSTODY === "privy") {
+    const acct = privy.accountFor(role);
+    if (acct) return createWalletClient({ account: acct, chain: arcTestnet, transport: http() });
+  }
+  const pk = KEYS()[role];
+  if (!pk) throw new Error(`no key/Privy wallet for '${role}'`);
+  return wallet(pk);
+}
+
 // Read lazily so dotenv (loaded via env.ts) has populated process.env first.
 const KEYS = (): Record<string, string | undefined> => ({
   guard: process.env.GUARD_PRIVATE_KEY,
@@ -64,11 +78,9 @@ export async function usdcBalance(addr: string): Promise<bigint> {
 
 /** courier -> guard: transfer the negotiated USDC amount on Arc. */
 export async function pay(from: string, to: string, amountUsdc: string) {
-  const pk = KEYS()[from];
-  if (!pk) throw new Error(`no private key for '${from}'`);
   const toAddr = getAddress(ROBOTS[to as keyof typeof ROBOTS]?.wallet ?? to);
   const value = parseUnits(amountUsdc, 6); // USDC token is 6dp
-  const hash = await wallet(pk).writeContract({
+  const hash = await walletFor(from).writeContract({
     address: ARC.usdc as `0x${string}`, abi: erc20,
     functionName: "transfer", args: [toAddr, value],
   });
