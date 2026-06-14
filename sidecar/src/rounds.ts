@@ -48,7 +48,7 @@ export type FeePayment = {
 };
 
 export type StakeAuthorization = {
-  adapter: "base-spend-permission" | "local-chain-escrow" | "manual";
+  adapter: "base-spend-permission" | "local-chain-escrow" | "native-eth-escrow" | "manual";
   status: "verified" | "settled" | "failed";
   roundId: string;
   token?: string;
@@ -138,6 +138,10 @@ export type Round = {
   id: string;
   status: RoundStatus;
   stakeUsdc: string;
+  stakeAsset?: "usdc" | "native-eth";
+  stakeWei?: string;
+  stakeDisplay?: string;
+  chainNetwork?: string;
   feeUsdc: string;
   durationSecs: number;
   countdownSecs: number;
@@ -181,6 +185,10 @@ type CreateRoundInput = {
   wallet?: string;
   displayName?: string;
   stakeUsdc?: string;
+  stakeAsset?: "usdc" | "native-eth";
+  stakeWei?: string;
+  stakeDisplay?: string;
+  chainNetwork?: string;
   feeUsdc?: string;
   durationSecs?: number;
   countdownSecs?: number;
@@ -231,6 +239,10 @@ export function createRound(input: CreateRoundInput): Round {
     status: wallet ? "challenge" : "accepted",
     chainStatus: "not-opened",
     stakeUsdc: input.stakeUsdc ?? DEFAULT_STAKE_USDC,
+    stakeAsset: input.stakeAsset ?? "usdc",
+    stakeWei: input.stakeWei,
+    stakeDisplay: input.stakeDisplay,
+    chainNetwork: input.chainNetwork,
     feeUsdc: input.feeUsdc ?? DEFAULT_FEE_USDC,
     durationSecs: clampInt(input.durationSecs, 5, 300, DEFAULT_DURATION_SECS),
     countdownSecs: clampInt(input.countdownSecs, 1, 10, DEFAULT_COUNTDOWN_SECS),
@@ -486,6 +498,53 @@ export function markChainJoined(
   return persistSnapshot(round, `round.${slot}_chain_joined`);
 }
 
+export function markNativeChainJoined(
+  id: string,
+  slot: DriverSlot,
+  txHash: string,
+  input?: { stakeWei?: string; chainNetwork?: string },
+): Round {
+  const round = getMutableRound(id);
+  requireJoinable(round);
+  const driver = requireDriver(round, slot);
+  const paidAt = Date.now();
+  const stakeWei = input?.stakeWei ?? round.stakeWei;
+  if (!stakeWei) throw new Error("native stake amount missing");
+  driver.chainJoined = true;
+  driver.feePaid = true;
+  driver.feePayment = {
+    status: "paid",
+    source: "manual",
+    amountUsdc: "0",
+    amountUnits: "0",
+    txHash,
+    paidAt,
+    reconciliationStatus: "reconciled",
+  };
+  driver.stakeAuthorized = true;
+  driver.stakeAuthorization = {
+    adapter: "native-eth-escrow",
+    status: "verified",
+    roundId: round.id,
+    token: "ETH",
+    amountUsdc: round.stakeDisplay ?? round.stakeUsdc,
+    amountUnits: stakeWei,
+    txHash,
+    verifiedAt: paidAt,
+  };
+  driver.joinedTx = txHash;
+  round.stakeAsset = "native-eth";
+  round.stakeWei = stakeWei;
+  round.chainNetwork = input?.chainNetwork ?? round.chainNetwork;
+  round.txHashes ??= {};
+  round.txHashes[slot === "challenger" ? "challengerJoin" : "opponentJoin"] = txHash;
+  const challenger = round.drivers.challenger;
+  const opponent = round.drivers.opponent;
+  round.chainStatus = challenger?.chainJoined && opponent?.chainJoined ? "joined" : "opened";
+  updateReady(round);
+  return persistSnapshot(round, `round.${slot}_native_chain_joined`);
+}
+
 export function markChainLocked(id: string, txHash: string): Round {
   const round = getMutableRound(id);
   if (round.chainStatus !== "joined") throw new Error("on-chain round is not joined");
@@ -622,7 +681,9 @@ function buildCancellation(
     reason,
     canceledAt,
     feePolicy: feePolicy(round),
-    stakePolicy: "canceled rounds do not settle delegated stake permissions",
+    stakePolicy: round.stakeAsset === "native-eth"
+      ? "canceled native ETH escrow should be refunded on-chain"
+      : "canceled rounds do not settle delegated stake permissions",
     drivers: {
       challenger: cancelDriverSummary(round.drivers.challenger, canceledAt),
       opponent: cancelDriverSummary(round.drivers.opponent, canceledAt),
@@ -649,12 +710,15 @@ function stakeCancelStatus(
   canceledAt: number,
 ): Cancellation["drivers"][DriverSlot]["stakeStatus"] {
   if (!authorization) return "none";
-  if (authorization.adapter === "local-chain-escrow") return "escrowed";
+  if (authorization.adapter === "local-chain-escrow" || authorization.adapter === "native-eth-escrow") return "escrowed";
   if (authorization.expiresAt && authorization.expiresAt <= canceledAt) return "expired";
   return "active";
 }
 
 function feePolicy(round: Round): string {
+  if (round.stakeAsset === "native-eth") {
+    return "Clanker500 v1 has no separate race fee; native ETH stake is held in escrow";
+  }
   const drivers = [round.drivers.challenger, round.drivers.opponent].filter((driver): driver is Driver => Boolean(driver));
   if (drivers.some((driver) => driver.feePayment?.source === "x402")) {
     return "x402 race fees stay paid to the fleet treasury; matched stake is not settled";
@@ -1015,7 +1079,12 @@ function parsePaymentStatus(value: unknown): FeePayment["status"] {
 }
 
 function parseStakeAdapter(value: unknown): StakeAuthorization["adapter"] {
-  if (value === "base-spend-permission" || value === "local-chain-escrow" || value === "manual") return value;
+  if (
+    value === "base-spend-permission" ||
+    value === "local-chain-escrow" ||
+    value === "native-eth-escrow" ||
+    value === "manual"
+  ) return value;
   return "manual";
 }
 
