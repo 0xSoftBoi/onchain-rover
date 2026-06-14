@@ -66,6 +66,32 @@ The reset script:
   `/ws/telemetry`
 - sends a final `/motors/stop`
 
+## Stage WiFi Boot Profile
+
+The robots should boot onto the stage router, not whichever saved hotspot was
+last used during recovery. Configure the saved NetworkManager profile once:
+
+```bash
+./robot-harness/deploy/configure-stage-wifi.sh \
+  --ssid TP-Link_A768 \
+  --disable AccessPopup \
+  --activate \
+  --install-retry-service
+```
+
+If the `TP-Link_A768` connection does not exist yet, create it without putting
+the password in shell history or the repo:
+
+```bash
+read -r -s ROVER_WIFI_PASSWORD
+export ROVER_WIFI_PASSWORD
+./robot-harness/deploy/configure-stage-wifi.sh --ssid TP-Link_A768 --activate --install-retry-service
+unset ROVER_WIFI_PASSWORD
+```
+
+The retry service stores only the SSID/interface in `/etc/default/onchain-rover-wifi`.
+The WiFi secret remains in NetworkManager's saved connection.
+
 ## Deploy Checker
 
 Use the standalone Rust checker from the laptop to prove each bot is deployed as

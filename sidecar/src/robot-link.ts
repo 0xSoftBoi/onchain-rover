@@ -96,11 +96,13 @@ type WebrtcPilotClient = {
 
 type RobotRuntime = {
   robot: RobotName;
+  resolvedBaseUrl?: string;
+  resolvedBaseUrlAt?: number;
   robotSocket?: WebSocket;
   robotConnectedAt?: number;
   lastRobotSeenAt?: number;
   restDriveInFlight: boolean;
-  restAuthorizedTokens: Map<string, SpeedMode>;
+  restAuthorizedTokens: Map<string, string>;
   pendingRestDrive?: DriveCommand;
   lastRestDriveErrorAt: number;
   telemetryClients: Set<WebSocket>;
@@ -127,6 +129,13 @@ const CMD_MIN_INTERVAL_MS = 20;
 const DEADMAN_MS = 650;
 const TELEMETRY_STALE_MS = 1600;
 const TELEMETRY_HISTORY_MAX = 900;
+const ROBOT_URL_CACHE_MS = 2500;
+const ROBOT_PROBE_TIMEOUT_MS = 700;
+
+const PREFERRED_ROBOT_URLS: Record<RobotName, string[]> = {
+  guard: ["http://172.16.2.151:8000"],
+  courier: ["http://192.168.0.192:8000", "http://192.168.55.1:8000"],
+};
 
 const runtimes = new Map<RobotName, RobotRuntime>();
 let deadmanLoop: NodeJS.Timeout | undefined;
@@ -222,7 +231,7 @@ export function installRobotLink(app: Express, server: Server) {
       const runtime = runtimeFor(requireRobotName(req.params.robot));
       const token = String(req.body?.token ?? "");
       if (token) requireSession(runtime, token);
-      safeStop(runtime, "operator stop");
+      revokePilotSessions(runtime.robot, "operator stop");
       res.json({ ok: true, robot: runtime.robot, stopped: true });
     } catch (e: any) {
       res.status(400).json({ error: e.message });
@@ -247,7 +256,7 @@ export function installRobotLink(app: Express, server: Server) {
     res.on("close", cleanup);
     try {
       const robot = requireRobotName(req.params.robot);
-      const upstream = new URL("/stream", ROBOTS[robot].url).toString();
+      const upstream = new URL("/stream", await resolveRobotBaseUrl(robot)).toString();
       if (req.query.proxy === "0") return res.redirect(upstream);
       res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
       res.setHeader("Pragma", "no-cache");
@@ -603,6 +612,52 @@ function runtimeFor(robot: RobotName): RobotRuntime {
   return runtime;
 }
 
+function candidateRobotUrls(robot: RobotName): string[] {
+  return uniqueStrings([
+    ...(PREFERRED_ROBOT_URLS[robot] ?? []),
+    ROBOTS[robot].url,
+  ].filter(Boolean).map((url) => url.replace(/\/$/, "")));
+}
+
+async function resolveRobotBaseUrl(robot: RobotName): Promise<string> {
+  const runtime = runtimeFor(robot);
+  if (runtime.resolvedBaseUrl && runtime.resolvedBaseUrlAt && Date.now() - runtime.resolvedBaseUrlAt < ROBOT_URL_CACHE_MS) {
+    return runtime.resolvedBaseUrl;
+  }
+
+  const candidates = runtime.resolvedBaseUrl
+    ? uniqueStrings([runtime.resolvedBaseUrl, ...candidateRobotUrls(robot)])
+    : candidateRobotUrls(robot);
+  const failures: string[] = [];
+  for (const baseUrl of candidates) {
+    try {
+      const res = await fetch(new URL("/health", baseUrl), { signal: AbortSignal.timeout(ROBOT_PROBE_TIMEOUT_MS) });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok || body?.ok === false || body?.role !== robot) {
+        failures.push(`${baseUrl} role=${body?.role ?? "unknown"} status=${res.status}`);
+        continue;
+      }
+      runtime.resolvedBaseUrl = baseUrl;
+      runtime.resolvedBaseUrlAt = Date.now();
+      return baseUrl;
+    } catch (e: any) {
+      failures.push(`${baseUrl} ${e?.name === "TimeoutError" ? "timeout" : e?.message ?? e}`);
+    }
+  }
+  runtime.resolvedBaseUrl = undefined;
+  runtime.resolvedBaseUrlAt = undefined;
+  throw new Error(`no reachable ${robot} robot URL (${failures.join("; ")})`);
+}
+
+function clearResolvedRobotBaseUrl(runtime: RobotRuntime) {
+  runtime.resolvedBaseUrl = undefined;
+  runtime.resolvedBaseUrlAt = undefined;
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return [...new Set(values)];
+}
+
 function requireSession(
   runtime: RobotRuntime,
   token: string,
@@ -816,8 +871,9 @@ async function flushRestDrive(runtime: RobotRuntime) {
     const command = runtime.pendingRestDrive;
     runtime.pendingRestDrive = undefined;
     try {
-      await ensureRestPilotToken(runtime, command);
-      const res = await fetch(new URL("/drive", ROBOTS[runtime.robot].url), {
+      const baseUrl = await resolveRobotBaseUrl(runtime.robot);
+      await ensureRestPilotToken(runtime, command, baseUrl);
+      const res = await fetch(new URL("/drive", baseUrl), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ token: command.token, left: command.left, right: command.right }),
@@ -826,6 +882,7 @@ async function flushRestDrive(runtime: RobotRuntime) {
       const body = await res.json().catch(() => ({}));
       if (!res.ok || body.error) throw new Error(body.error || `robot drive failed ${res.status}`);
     } catch (err) {
+      clearResolvedRobotBaseUrl(runtime);
       const now = Date.now();
       if (now - runtime.lastRestDriveErrorAt > 1000) {
         runtime.lastRestDriveErrorAt = now;
@@ -839,10 +896,11 @@ async function flushRestDrive(runtime: RobotRuntime) {
   }
 }
 
-async function ensureRestPilotToken(runtime: RobotRuntime, command: DriveCommand) {
+async function ensureRestPilotToken(runtime: RobotRuntime, command: DriveCommand, baseUrl: string) {
   if (!command.token) return;
-  if (runtime.restAuthorizedTokens.get(command.token) === command.speed_mode) return;
-  const res = await fetch(new URL("/pilot/authorize", ROBOTS[runtime.robot].url), {
+  const cacheKey = `${baseUrl} ${command.speed_mode}`;
+  if (runtime.restAuthorizedTokens.get(command.token) === cacheKey) return;
+  const res = await fetch(new URL("/pilot/authorize", baseUrl), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -854,11 +912,12 @@ async function ensureRestPilotToken(runtime: RobotRuntime, command: DriveCommand
   });
   const body = await res.json().catch(() => ({}));
   if (!res.ok || body.error) throw new Error(body.error || `robot pilot authorize failed ${res.status}`);
-  runtime.restAuthorizedTokens.set(command.token, command.speed_mode);
+  runtime.restAuthorizedTokens.set(command.token, cacheKey);
 }
 
 function safeStop(runtime: RobotRuntime, _reason: string, sendRobot = true) {
   runtime.stoppedByDeadman = true;
+  runtime.pendingRestDrive = undefined;
   recordRobotTraceEvent(runtime, "safe-stop", { reason: _reason });
   runtime.lastCommand = {
     ...runtime.lastCommand,
@@ -1070,6 +1129,8 @@ function robotLinkSnapshot() {
         tilt: runtime.lastCameraCommand.tilt,
       },
       telemetry: runtime.telemetry,
+      resolvedBaseUrl: runtime.resolvedBaseUrl ?? null,
+      candidateUrls: candidateRobotUrls(robot),
     };
   }
   return out;
