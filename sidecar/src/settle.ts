@@ -27,6 +27,19 @@ export const arcTestnet = defineChain({
 
 const pub = createPublicClient({ chain: arcTestnet, transport: http() });
 
+// Receipt metadata for full on-chain transparency: confirmation latency, gas
+// cost (Arc pays gas in USDC, 18dp), and the block it landed in.
+function meta(receipt: any, t0: number) {
+  let gasUsdc: number | undefined;
+  try { gasUsdc = +(Number(receipt.gasUsed * receipt.effectiveGasPrice) / 1e18).toFixed(6); } catch { /* */ }
+  return {
+    ms: Date.now() - t0,
+    block: receipt.blockNumber != null ? Number(receipt.blockNumber) : undefined,
+    gasUsed: receipt.gasUsed != null ? receipt.gasUsed.toString() : undefined,
+    gasUsdc,
+  };
+}
+
 const erc20 = parseAbi([
   "function transfer(address to, uint256 amount) returns (bool)",
   "function balanceOf(address) view returns (uint256)",
@@ -78,6 +91,7 @@ export async function usdcBalance(addr: string): Promise<bigint> {
 
 /** courier -> guard: transfer the negotiated USDC amount on Arc. */
 export async function pay(from: string, to: string, amountUsdc: string) {
+  const t0 = Date.now();
   const toAddr = getAddress(ROBOTS[to as keyof typeof ROBOTS]?.wallet ?? to);
   const value = parseUnits(amountUsdc, 6); // USDC token is 6dp
   const hash = await walletFor(from).writeContract({
@@ -87,7 +101,7 @@ export async function pay(from: string, to: string, amountUsdc: string) {
   const receipt = await pub.waitForTransactionReceipt({ hash });
   return {
     tx: hash, status: receipt.status, from, to, amountUsdc,
-    explorer: `${ARC.explorer}/tx/${hash}`,
+    explorer: `${ARC.explorer}/tx/${hash}`, ...meta(receipt, t0),
   };
 }
 
@@ -97,6 +111,7 @@ export async function mintPass(to: string, priceUsdc: string) {
   const pass = process.env.EVENTPASS_ADDRESS;
   if (!pk) throw new Error("no guard private key");
   if (!pass) throw new Error("EVENTPASS_ADDRESS not set (deploy EventPass first)");
+  const t0 = Date.now();
   const toAddr = getAddress(ROBOTS[to as keyof typeof ROBOTS]?.wallet ?? to);
   const price6 = parseUnits(priceUsdc, 6);
   const hash = await wallet(pk).writeContract({
@@ -106,7 +121,7 @@ export async function mintPass(to: string, priceUsdc: string) {
   const receipt = await pub.waitForTransactionReceipt({ hash });
   return {
     tx: hash, status: receipt.status, to, priceUsdc,
-    explorer: `${ARC.explorer}/tx/${hash}`,
+    explorer: `${ARC.explorer}/tx/${hash}`, ...meta(receipt, t0),
   };
 }
 
@@ -136,6 +151,7 @@ export async function giveFeedback(opts: {
 }) {
   const reg = process.env.REPUTATION_ADDRESS;
   if (!reg) throw new Error("REPUTATION_ADDRESS not set (deploy ReputationRegistry)");
+  const t0 = Date.now();
   const hash = await requesterWallet().writeContract({
     address: reg as `0x${string}`, abi: repAbi, functionName: "giveFeedback",
     args: [
@@ -146,7 +162,7 @@ export async function giveFeedback(opts: {
     ],
   });
   const receipt = await pub.waitForTransactionReceipt({ hash });
-  return { tx: hash, status: receipt.status, explorer: `${ARC.explorer}/tx/${hash}` };
+  return { tx: hash, status: receipt.status, explorer: `${ARC.explorer}/tx/${hash}`, ...meta(receipt, t0) };
 }
 
 // --- RaceMarket: real parimutuel betting + settlement on Arc ----------------
@@ -185,6 +201,7 @@ export async function openRaceOnChain(numRacers = 2) {
 export async function betOnChain(raceId: number, racerIdx: number, amountUsdc: string, nullifier: string) {
   const market = process.env.RACEMARKET_ADDRESS;
   if (!market) throw new Error("RACEMARKET_ADDRESS not set");
+  const t0 = Date.now();
   const value = parseUnits(amountUsdc, 6);
   const relayer = createWalletClient({
     account: privateKeyToAccount(process.env.TREASURY_PRIVATE_KEY as `0x${string}`),
@@ -206,19 +223,20 @@ export async function betOnChain(raceId: number, racerIdx: number, amountUsdc: s
     address: market as `0x${string}`, abi: raceAbi, functionName: "bet",
     args: [BigInt(raceId), racerIdx, value, nullU] });
   const receipt = await pub.waitForTransactionReceipt({ hash });
-  return { tx: hash, status: receipt.status, explorer: `${ARC.explorer}/tx/${hash}` };
+  return { tx: hash, status: receipt.status, explorer: `${ARC.explorer}/tx/${hash}`, ...meta(receipt, t0) };
 }
 
 /** Guard settles the race on-chain with the Gemini-verified finish proof. */
 export async function settleRaceOnChain(raceId: number, winnerIdx: number, sha256: string, blobId: string) {
   const market = process.env.RACEMARKET_ADDRESS;
   if (!market) throw new Error("RACEMARKET_ADDRESS not set");
+  const t0 = Date.now();
   const hash = await guardWallet().writeContract({
     address: market as `0x${string}`, abi: raceAbi, functionName: "settle",
     args: [BigInt(raceId), winnerIdx,
            (`0x${(sha256||"0".repeat(64)).replace(/^0x/,"")}`) as `0x${string}`, blobId || ""] });
   const receipt = await pub.waitForTransactionReceipt({ hash });
-  return { tx: hash, status: receipt.status, explorer: `${ARC.explorer}/tx/${hash}` };
+  return { tx: hash, status: receipt.status, explorer: `${ARC.explorer}/tx/${hash}`, ...meta(receipt, t0) };
 }
 
 // --- Treasury: Ledger-clear-signed withdrawal (governance climax) ----------
@@ -272,9 +290,10 @@ export async function broadcastSigned(txFields: any, sig: { r: string; s: string
     s: ("0x" + sig.s.replace(/^0x/, "").padStart(64, "0")) as `0x${string}`,
     yParity,
   });
+  const t0 = Date.now();
   const hash = await pub.sendRawTransaction({ serializedTransaction: signed });
   const receipt = await pub.waitForTransactionReceipt({ hash });
-  return { tx: hash, status: receipt.status, explorer: `${ARC.explorer}/tx/${hash}` };
+  return { tx: hash, status: receipt.status, explorer: `${ARC.explorer}/tx/${hash}`, ...meta(receipt, t0) };
 }
 
 export async function treasuryInfo() {

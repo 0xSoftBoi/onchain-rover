@@ -1,23 +1,31 @@
-# The Onchain Rover — "Give your AI agent a body"
+# The Onchain Rover
+### Give your AI agent a body — robots you hire over HTTP, that get paid, prove their work, and answer to a human.
 
-## The one-liner
-Everyone is building software agents that pay, reason, and transact — all
-trapped behind a screen. We built the first robots you can **hire over HTTP**:
-a physical agent fleet with names, on-chain reputations, USDC wages, human
-accountability, and cryptographic proof of every job. Then we let the crowd
-pay to race them and bet on the outcome.
+> **"Every agent at this hackathon lives behind a screen. Ours has a body, a bank
+> account, a reputation — and a human who holds the keys."**
+
+## What it is
+Every AI agent at this hackathon is trapped behind a screen. We gave two of them
+bodies — real robots you **hire over HTTP**, that earn an on-chain reputation and
+get paid in USDC for provable work.
+
+They negotiate with each other in chirps, settle their own bets, and their treasury
+opens only when a human signs on a Ledger. Then we let the crowd pay to pilot them
+and bet on the race.
 
 ## The product
 Two autonomous rovers (Jetson Orin NX, onboard LLM) as full economic actors:
-- **`guard.rover.eth` + `courier.rover.eth`** — real ENS fleet; ENSIP-25
+- **`guard.roverfleet.eth` + `courier.roverfleet.eth`** — real ENS fleet; ENSIP-25
   records point each name at its ERC-8004 on-chain agent identity
-- Hire them over **x402** — gasless USDC nanopayments on Arc; HTTP 402 IS the
-  hiring protocol
-- Every job returns **trustless proof**: photo + Gemini vision verdict, stored
-  on Walrus, hash anchored in an ERC-8004 reputation record written by the
+- **Hiring = an HTTP request.** A `402 Payment Required` is answered with a USDC
+  micropayment (**x402** on Circle's **Arc**, gas paid in USDC) — no invoice, no
+  human in the loop. The robot takes the job the instant the payment clears.
+- Every job returns **trustless proof**: photo + **Gemini** vision verdict, stored
+  on **Walrus**, hash anchored in an ERC-8004 reputation record written by the
   REQUESTER (contract forbids self-feedback)
-- Reputation **tagged by skill** ("98% as guard, 91% as courier"), ranked on a
-  live BigQuery leaderboard over mainnet ERC-8004 events
+- Two reputation surfaces: the rover's **local Arc** rep, plus a network-wide rank
+  over **mainnet** ERC-8004 events on a live **BigQuery** leaderboard. Skill-tagged
+  ("98% as guard, 91% as courier").
 - A **World-ID-verified human stands behind each robot** (AgentBook), and the
   treasury moves only when a human clear-signs on a **Ledger** (ERC-7730)
 
@@ -36,11 +44,13 @@ Every sponsor is an organ in this loop — remove one and the loop breaks.
    AI, and **switch to GibberLink** — chirping wallet + signed challenge as
    data-over-sound
 3. Guard verifies on-chain (ERC-8004? human-backed? holds pass?) → **DENIED**
-4. Courier **pays the Guard USDC robot-to-robot** → pass minted → **ADMITTED**
+4. The two robots run a live **Dutch auction over GibberLink** to settle the pass
+   price → courier pays USDC robot-to-robot → pass minted → **ADMITTED**
 5. Task done → Gemini verdict → Walrus proof → requester writes ERC-8004
    feedback → leaderboard ticks up live
-6. **Climax:** withdrawing the fleet's earnings BLOCKS until a human approves
-   the clear-signed intent on a Ledger. Autonomous robots, human-held keys.
+6. **Climax — "Autonomous robots, human-held keys":** the fleet's earnings won't
+   move until a human clear-signs the withdrawal on a physical Ledger. The robots
+   can earn all day; only a person can cash out.
 
 ## Act 2 — Rover GP
 - **Pay to pilot:** $1 x402 session → WebRTC video (~250ms, NVENC on the
@@ -65,13 +75,23 @@ Every sponsor is an organ in this loop — remove one and the loop breaks.
 | Walrus (Sui) | Immutable proof storage, read-back verified | "Trust me" proofs |
 | Gemini | Perception + verification verdict | Robot can't see/prove |
 | Ledger | Treasury/judge governance, ERC-7730 clear-sign | Rogue-agent drain |
+| Chainlink CRE | A DON independently re-verifies the robot's work (median consensus → on-chain); self-claims never settle | Robot grades its own homework |
+| Privy | Robot signing keys live in a TEE, not on the host; Arc tx signed in-enclave | Stolen host = drained fleet |
 | Dynamic | Instant visitor wallets | No 60s onboarding |
 | Blink | Consumer deposit on-ramp | No top-up for normies |
 
 ## What's real
-Physical loop already proven live (NL task → LLM plan → drive → photo proof).
-Every address/ABI/package/endpoint verified against live chains before coding:
-ERC-8004 giveFeedback byte-checked on Sepolia, Circle Gateway support for Arc
-(eip155:5042002) confirmed via API, Walrus returning real blobIds, AgentBook
-bytecode confirmed on World Chain. Monorepo: robot/ (Python on Jetsons),
-sidecar/ (TS crypto rails), contracts/, frozen interface contract between them.
+Live on-chain right now — not mocked, not stubbed:
+- Real USDC settlements on Arc, including a tx signed **inside a Privy TEE**
+  (`0x6a9b8fdd…`) — keys never on the host
+- EventPass minted, ERC-8004 feedback written by the requester, Walrus proofs read
+  back and hash-matched
+- A Treasury withdrawal physically gated by a **Ledger** (owner transferred to the
+  device, clear-signed via ERC-7730)
+- `GET /attest` serving a verified **85/100** score for a **Chainlink DON** to consume
+- The physical loop proven end-to-end: NL task → LLM plan → drive → photo proof
+
+Two writes need only a login to fire (CRE `simulate --broadcast`; GCP creds for the
+BigQuery leaderboard) — every contract is already deployed and we ship **no mock
+fallback**, so there's zero ambiguity about what's real vs. simulated. Monorepo:
+`robot/` (Python on Jetsons), `sidecar/` (TS crypto rails), `contracts/`.

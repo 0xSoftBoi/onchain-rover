@@ -32,10 +32,12 @@ import * as raceStore from "./race-store.js";
 import * as robotLink from "./robot-link.js";
 import * as rounds from "./rounds.js";
 import * as settle from "./settle.js";
+import * as eip3009 from "./eip3009.js";
 import * as stakeAdapters from "./stake-adapter.js";
 import * as telemetryTrace from "./telemetry-trace.js";
 import * as treasuryLedger from "./treasury-ledger.js";
 import * as session from "./session.js";
+import * as events from "./events.js";
 
 // Never let one bad call take down the demo: log unhandled errors, stay up.
 process.on("unhandledRejection", (e) => console.error("unhandledRejection:", e));
@@ -43,8 +45,71 @@ process.on("uncaughtException", (e) => console.error("uncaughtException:", e));
 
 const app = express();
 app.use(express.json());
+
+// CORS: lets the published GitHub Pages dashboard (or any remote viewer) read
+// the live sidecar via ?api=<url>. Read-only demo surface, so allow all origins.
+app.use((req, res, next) => {
+  res.set("Access-Control-Allow-Origin", "*");
+  res.set("Access-Control-Allow-Headers", "Content-Type, ngrok-skip-browser-warning");
+  res.set("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  if (req.method === "OPTIONS") return res.sendStatus(204);
+  next();
+});
+
+// Live event bus: the dashboard subscribes once and gets every layer's activity
+// pushed (SSE). A snapshot seeds late-joiners. See events.ts.
+app.get("/events/stream", events.sse);
+app.get("/events", (_req, res) => res.json(events.snapshot()));
+
+// x402 transparency: when a paid route settles a Gateway payment, surface it.
+// The gateway middleware populates req.payment during the route; we read it on
+// response finish so every nanopayment shows up on the wall.
+app.use((req, res, next) => {
+  res.on("finish", () => {
+    const p = (req as any).payment;
+    if (p) events.emit({ layer: "backend", kind: "x402",
+      detail: `paid ${req.method} ${req.path}` + (p.payer ? ` · ${String(p.payer).slice(0, 8)}…` : ""),
+      severity: "ok", extra: p });
+  });
+  next();
+});
+
 const server = createServer(app);
 robotLink.installRobotLink(app, server);
+
+// Instrumented fetch to a robot: emits a backend event with latency + outcome
+// so every sidecar→rover HTTP call is visible on the wall. Behaviour-identical
+// to fetch otherwise. `quiet` suppresses the success event (for hot poll loops).
+async function robotFetch(name: string, path: string, init?: RequestInit & { quiet?: boolean }) {
+  const t0 = Date.now();
+  const label = `${name} ${path.split("?")[0]}`;
+  try {
+    const r = await fetch(`${robot(name).url}${path}`, init);
+    if (!init?.quiet) events.emit({ layer: "robot", kind: init?.method === "POST" ? "CALL" : "GET",
+      detail: `${label} → ${r.status}`, severity: r.ok ? "ok" : "warn", ms: Date.now() - t0 });
+    return r;
+  } catch (e: any) {
+    events.emit({ layer: "robot", kind: "CALL", detail: `${label} → ${e.message || "unreachable"}`,
+      severity: "error", ms: Date.now() - t0 });
+    throw e;
+  }
+}
+
+// Wrap an on-chain settlement so the wall sees it go pending → confirmed (with
+// gas/block/latency), or pending → failed. Also feeds the legacy /onchain/feed.
+async function chainOp<T extends { tx?: string; ms?: number; gasUsdc?: number; block?: number }>(
+  kind: string, detail: string, usdc: number | undefined, fn: () => Promise<T>): Promise<T> {
+  const pid = events.begin("chain", kind, detail, usdc);
+  try {
+    const r = await fn();
+    events.end(pid);
+    logOnchain(kind, detail, r?.tx, usdc, { ms: r?.ms, gasUsdc: r?.gasUsdc, block: r?.block });
+    return r;
+  } catch (e: any) {
+    events.end(pid, e.message);
+    throw e;
+  }
+}
 
 // ----- DEMO_MOCK: fills every panel with realistic data so the dashboard can
 // be reviewed without live robots/funds. Unset DEMO_MOCK to go fully real. -----
@@ -80,9 +145,29 @@ let _mockKindIdx = 0;
 function _pushMock() {
   const [kind, det, usdc] = _mockKinds[_mockKindIdx++ % _mockKinds.length];
   const tx = _rndTx();
-  _mockEvents.unshift({ t: Date.now(), kind, detail: det(), tx, explorer: ex(tx), usdc });
+  const detail = det();
+  const ms = 1400 + (_mockTx % 9) * 220, block = 4200000 + _mockTx, gasUsdc = +(0.002 + (_mockTx % 5) * 0.0006).toFixed(6);
+  _mockEvents.unshift({ t: Date.now(), kind, detail, tx, explorer: ex(tx), usdc, ms, block, gasUsdc, chain: "Arc" });
   if (_mockEvents.length > 60) _mockEvents.pop();
+  // mock the pending→confirmed handshake on the bus so the wall streams live
+  const pid = events.begin("chain", kind, detail, usdc as number);
+  setTimeout(() => { events.end(pid);
+    events.emit({ layer: "chain", kind, detail, severity: "ok", tx, explorer: ex(tx),
+      usdc: usdc as number, ms, block, gasUsdc, chain: "Arc" }); }, 1100);
 }
+// mock backend/robot bus chatter so the SYSTEM BUS tile is alive offline
+const _mockBus: [events.Layer, string, string, events.Severity][] = [
+  ["robot", "CALL", "guard /negotiate/sell → 200", "ok"],
+  ["robot", "CALL", "courier /negotiate/buy → 200", "ok"],
+  ["backend", "x402", "paid POST /pilot/courier/start · 0x9af3…", "ok"],
+  ["robot", "GET", "guard /telemetry → 200", "ok"],
+  ["robot", "CALL", "guard /capture → 200", "ok"],
+  ["backend", "AUCTION", "haggling… price $1.50", "info"],
+  ["robot", "CALL", "guard /store-proof → 200", "ok"],
+];
+let _mockBusIdx = 0;
+if (MOCK) setInterval(() => { const [layer, kind, detail, severity] = _mockBus[_mockBusIdx++ % _mockBus.length];
+  events.emit({ layer, kind, detail, severity, ms: 120 + (_mockBusIdx * 37) % 400 }); }, 2300);
 function mockFeedLive() { return feedPayload(_mockEvents); }
 if (MOCK) { for (let i = 0; i < 8; i++) _pushMock(); setInterval(_pushMock, 4000); }
 // Mock negotiation reasoning — the two robots' local gemma3 thoughts streaming
@@ -106,6 +191,7 @@ function _pushReason() {
   const [robot, phase, text, kind] = _reasonScript[_reasonIdx++ % _reasonScript.length];
   _reasonLog.unshift({ t: Date.now(), robot, phase, text, kind });
   if (_reasonLog.length > 60) _reasonLog.pop();
+  events.emit({ layer: "reason", kind, detail: text, severity: "info", extra: { robot, phase } });
 }
 function mockReason() { return _reasonLog.slice(0, 40); }
 if (MOCK) { for (let i = 0; i < 6; i++) _pushReason(); setInterval(_pushReason, 2500); }
@@ -163,12 +249,16 @@ app.post("/robot/heartbeat", (req, res) => {
 });
 
 // --- on-chain settlement feed (live "what's settling" for the dashboard) ---
-type OnchainEvent = { t: number; kind: string; tx?: string; detail: string; explorer?: string; usdc?: number };
+type OnchainMeta = { ms?: number; gasUsdc?: number; block?: number; chain?: string };
+type OnchainEvent = { t: number; kind: string; tx?: string; detail: string; explorer?: string; usdc?: number } & OnchainMeta;
 const onchainFeed: OnchainEvent[] = [];
-function logOnchain(kind: string, detail: string, tx?: string, usdc?: number) {
-  onchainFeed.unshift({ t: Date.now(), kind, detail, tx, usdc,
-    explorer: tx ? `${ARC.explorer}/tx/${tx}` : undefined });
+function logOnchain(kind: string, detail: string, tx?: string, usdc?: number, m: OnchainMeta = {}) {
+  const chain = m.chain ?? "Arc";
+  const explorer = tx ? `${ARC.explorer}/tx/${tx}` : undefined;
+  onchainFeed.unshift({ t: Date.now(), kind, detail, tx, usdc, explorer, ...m, chain });
   if (onchainFeed.length > 80) onchainFeed.pop();
+  events.emit({ layer: "chain", kind, detail, severity: "ok", tx, explorer, usdc,
+    ms: m.ms, gasUsdc: m.gasUsdc, block: m.block, chain });
 }
 function feedPayload(events: OnchainEvent[]) {
   const settledUsdc = events.reduce((s, e) => s + (e.usdc || 0), 0);
@@ -184,6 +274,8 @@ const reasoning: Thought[] = [];
 function logReason(robot: string, phase: string, text: string, kind = "thought") {
   reasoning.unshift({ t: Date.now(), robot, phase, text, kind });
   if (reasoning.length > 120) reasoning.pop();
+  events.emit({ layer: "reason", kind, detail: text, severity: "info",
+    extra: { robot, phase } });
 }
 // robots POST their LLM reasoning here (fire-and-forget); dashboard reads /reason/feed
 app.post("/reason", (req, res) => {
@@ -336,8 +428,8 @@ app.post("/race/bet", async (req, res) => {
     let onchain;
     if (process.env.RACEMARKET_ADDRESS && onChainRaceId !== null) {
       const racerIdx = race.raceState()?.racers.indexOf(racer as RobotName) ?? 0;
-      onchain = await settle.betOnChain(onChainRaceId, racerIdx, String(amount), v.nullifier);
-      logOnchain("BET", `$${amount} on ${racer} (World-verified human)`, onchain?.tx, Number(amount));
+      onchain = await chainOp("BET", `$${amount} on ${racer} (World-verified human)`, Number(amount),
+        () => settle.betOnChain(onChainRaceId!, racerIdx, String(amount), v.nullifier));
     }
     const odds = race.placeBet({ bettor, racer, amount: Number(amount), nullifier: v.nullifier });
     res.json({ ...odds, onchain });
@@ -408,9 +500,8 @@ app.post("/race/finish", async (req, res) => {
     // immutably on Walrus — that real hash + blobId settle the market on-chain.
     let proof: { sha256?: string; blobId?: string } = {};
     try {
-      await fetch(`${robot("guard").url}/capture`, { method: "POST",
-        signal: AbortSignal.timeout(8000) });
-      proof = await (await fetch(`${robot("guard").url}/store-proof`, { method: "POST",
+      await robotFetch("guard", "/capture", { method: "POST", signal: AbortSignal.timeout(8000) });
+      proof = await (await robotFetch("guard", "/store-proof", { method: "POST",
         signal: AbortSignal.timeout(20000) })).json();
       if (proof?.blobId) setProof({ blobId: proof.blobId, sha256: proof.sha256,
         label: `${winner} wins`, t: Date.now() });
@@ -418,9 +509,8 @@ app.post("/race/finish", async (req, res) => {
     let settled;
     if (process.env.RACEMARKET_ADDRESS && onChainRaceId !== null) {
       const winnerIdx = r.racers.indexOf(winner);
-      settled = await settle.settleRaceOnChain(
-        onChainRaceId, winnerIdx, proof.sha256 ?? "", proof.blobId ?? "");
-      logOnchain("RACE SETTLE", `${winner} wins · proof ${(proof.blobId||"").slice(0,10)}…`, settled?.tx);
+      settled = await chainOp("RACE SETTLE", `${winner} wins · proof ${(proof.blobId||"").slice(0,10)}…`, undefined,
+        () => settle.settleRaceOnChain(onChainRaceId!, winnerIdx, proof.sha256 ?? "", proof.blobId ?? ""));
     }
     res.json({ ...r, proof, settled });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -457,8 +547,8 @@ app.post("/verify-agent", async (req, res) => {
 app.post("/pay", async (req, res) => {
   try {
     const { from = "courier", to = "guard", amt } = req.body;
-    const r = await settle.pay(from, to, String(amt));
-    logOnchain("PAY", `${from} → ${to} $${amt} USDC`, r?.tx, Number(amt));
+    const r = await chainOp("PAY", `${from} → ${to} $${amt} USDC`, Number(amt),
+      () => settle.pay(from, to, String(amt)));
     res.json(r);
   } catch (e: any) {
     res.status(500).json({ error: e.message });
@@ -469,8 +559,8 @@ app.post("/pay", async (req, res) => {
 app.post("/mint-pass", async (req, res) => {
   try {
     const { robot = "courier", price = "0.50" } = req.body;
-    const m = await settle.mintPass(robot, String(price));
-    logOnchain("MINT", `EventPass → ${robot} @ $${price}`, m?.tx);
+    const m = await chainOp("MINT", `EventPass → ${robot} @ $${price}`, undefined,
+      () => settle.mintPass(robot, String(price)));
     res.json(m);
   } catch (e: any) {
     res.status(500).json({ error: e.message });
@@ -495,12 +585,13 @@ app.post("/give-feedback", async (req, res) => {
   try {
     const r = robot(req.body.robot);
     // Arc reputation (same chain as the rest of the flywheel)
-    const fb = await settle.giveFeedback({
-      agentId: Number(r.agentId ?? 0),
-      score: req.body.score, skill: req.body.skill,
-      blobId: req.body.blobId, sha256: req.body.sha256,
-    });
-    logOnchain("REPUTATION", `${req.body.robot || "guard"} rated ${req.body.score} (skill: ${req.body.skill})`, fb?.tx);
+    const fb = await chainOp("REPUTATION",
+      `${req.body.robot || "guard"} rated ${req.body.score} (skill: ${req.body.skill})`, undefined,
+      () => settle.giveFeedback({
+        agentId: Number(r.agentId ?? 0),
+        score: req.body.score, skill: req.body.skill,
+        blobId: req.body.blobId, sha256: req.body.sha256,
+      }));
     res.json(fb);
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
@@ -538,7 +629,7 @@ type AuctionState = {
 const auctions = new Map<string, AuctionState>();
 
 app.post("/race/auction/start", async (req, res) => {
-  const { auctionId, settle: doSettle = false } = req.body;
+  const { auctionId, settle: doSettle = false, payMode = "transfer" } = req.body;
   const st: AuctionState = { settle: doSettle, note: "starting…" };
   auctions.set(auctionId, st);
   res.json({ started: true, auctionId });
@@ -546,12 +637,12 @@ app.post("/race/auction/start", async (req, res) => {
   // fire-and-forget orchestration; dashboard polls /race/auction/state
   (async () => {
     try {
-      await fetch(`${robot("courier").url}/negotiate/buy`, {
+      await robotFetch("courier", "/negotiate/buy", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ budget: 1.25, auctionId, timeout_secs: 70 }),
       });
       await new Promise((r) => setTimeout(r, 800));
-      await fetch(`${robot("guard").url}/negotiate/sell`, {
+      await robotFetch("guard", "/negotiate/sell", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ start: 2.0, floor: 0.5, step: 0.25, tick_secs: 4.0, auctionId }),
       });
@@ -559,8 +650,7 @@ app.post("/race/auction/start", async (req, res) => {
       let deal: any = {};
       for (let i = 0; i < 35; i++) {
         await new Promise((r) => setTimeout(r, 1500));
-        deal = await (await fetch(
-          `${robot("guard").url}/negotiate/result?auctionId=${auctionId}`)).json();
+        deal = await (await robotFetch("guard", `/negotiate/result?auctionId=${auctionId}`, { quiet: true })).json();
         if (deal.price) st.price = deal.price;
         if (deal.agreed !== undefined && !deal.pending) break;
       }
@@ -571,20 +661,31 @@ app.post("/race/auction/start", async (req, res) => {
       st.agreed = true; st.buyer = deal.buyer; st.price = deal.price;
       st.note = "sold — settling on Arc…";
       if (doSettle) {
-        const pay = await settle.pay("courier", "guard", String(deal.price));
-        st.pay = pay.tx;
-        logOnchain("PAY", `courier → guard $${deal.price} USDC`, pay.tx, Number(deal.price));
-        const mint = await settle.mintPass("courier", String(deal.price));
+        // payMode "eip3009": buyer signs a gasless USDC authorization, it travels
+        // robot->robot over GibberLink, seller verifies + submits. Else plain transfer().
+        let payTx: string | undefined;
+        if (payMode === "eip3009") {
+          const g = await chainOp("PAY",
+            `x402/EIP-3009 over GibberLink · courier signed → guard settled $${deal.price} · buyer gas $0`,
+            Number(deal.price), () => eip3009.settleOverGibber("courier", "guard", String(deal.price)));
+          payTx = g.tx;
+        } else {
+          const pay = await chainOp("PAY", `courier → guard $${deal.price} USDC`, Number(deal.price),
+            () => settle.pay("courier", "guard", String(deal.price)));
+          payTx = pay.tx;
+        }
+        st.pay = payTx;
+        const mint = await chainOp("MINT", `EventPass → courier @ $${deal.price}`, undefined,
+          () => settle.mintPass("courier", String(deal.price)));
         st.mint = mint.tx;
-        logOnchain("MINT", `EventPass → courier @ $${deal.price}`, mint.tx);
         st.note = "settled + minted; recording reputation…";
         // flywheel: requester rates the guard for the completed sale (skill=guard)
         try {
-          const fb = await settle.giveFeedback({
-            agentId: Number(ROBOTS.guard.agentId ?? 0), score: 95, skill: "guard",
-          });
+          const fb = await chainOp("REPUTATION", "guard rated 95 (skill: guard)", undefined,
+            () => settle.giveFeedback({
+              agentId: Number(ROBOTS.guard.agentId ?? 0), score: 95, skill: "guard",
+            }));
           st.feedback = fb.tx;
-          logOnchain("REPUTATION", "guard rated 95 (skill: guard)", fb.tx);
         } catch (e: any) { st.note = "minted; feedback skipped: " + e.message; }
         st.note = "settled + minted + reputation on Arc";
       }

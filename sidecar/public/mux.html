@@ -1,0 +1,483 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>🏁 CLANKER 500 // ROVER GRAND PRIX</title>
+<style>
+  /* ── CLANKER 500 · Indy-500 motorsport livery ──────────────────────────
+     var names kept (--amber/--teal/etc) so all data-driven JS color refs
+     still resolve — only the values are re-liveried to racing colors. */
+  :root{
+    --void:#0a0a0c; --panel:rgba(14,15,19,.72); --amber:#ffd400; --amber-d:#e0a800;
+    --amber-dim:#7a6400; --teal:#00d061; --red:#e10600; --violet:#2e9bff;
+    --txt:#f6f4ee; --dim:#8b8a82; --line:rgba(255,212,0,.20); --glow:rgba(255,212,0,.38);
+    --asphalt:#15161a; --chrome:#cfd2d6;
+  }
+  *{box-sizing:border-box; margin:0;}
+  html,body{height:100%; background:var(--void); color:var(--txt);
+    font-family:ui-monospace,"SF Mono",Menlo,monospace; letter-spacing:.02em;
+    -webkit-font-smoothing:antialiased;}
+  body{overflow:hidden;}
+
+  /* atmosphere — asphalt + speed */
+  #scan{position:fixed; inset:0; z-index:90; pointer-events:none; opacity:.5;
+    background:repeating-linear-gradient(90deg, transparent 0 60px, rgba(255,255,255,.012) 60px 62px);}
+  #vig{position:fixed; inset:0; z-index:91; pointer-events:none;
+    background:radial-gradient(ellipse 130% 100% at 50% 40%, transparent 48%, rgba(0,0,0,.6) 92%);}
+  body::before{content:""; position:fixed; inset:0; z-index:0; pointer-events:none;
+    background:radial-gradient(70% 60% at 82% -5%, rgba(225,6,0,.10), transparent 65%),
+              radial-gradient(70% 60% at 0% 105%, rgba(0,208,97,.06), transparent 65%),
+              repeating-linear-gradient(0deg, transparent 0 3px, rgba(0,0,0,.25) 3px 4px);}
+  /* checkered flag strip used as header/footer accent */
+  .checker{height:10px; background:
+    repeating-conic-gradient(#0a0a0c 0% 25%, #f6f4ee 0% 50%) 0 0 / 20px 20px;
+    opacity:.85; flex:none;}
+  .startline{height:3px; background:repeating-linear-gradient(90deg,var(--amber) 0 18px,#0a0a0c 18px 36px); flex:none;}
+
+  /* shell — pit-wall header */
+  .top{position:relative; z-index:5; display:flex; align-items:center; gap:18px;
+    padding:8px clamp(12px,1.4vw,24px); background:linear-gradient(180deg,rgba(225,6,0,.10),transparent);
+    border-bottom:2px solid var(--red);}
+  .top .num{font-family:Impact,"Arial Narrow",sans-serif; font-size:clamp(30px,4vw,62px); font-style:italic;
+    font-weight:900; color:var(--amber); line-height:.8; text-shadow:2px 2px 0 var(--red), 0 0 30px var(--glow);
+    letter-spacing:-.02em; flex:none;}
+  .top .ttl{font-family:Impact,"Arial Narrow",sans-serif; font-size:clamp(15px,1.7vw,28px); font-weight:900;
+    font-style:italic; letter-spacing:.04em; color:var(--txt); text-transform:uppercase; line-height:1;}
+  .top .ttl b{color:var(--amber);}
+  .top .sys{font-size:clamp(8px,.72vw,11px); color:var(--dim); letter-spacing:.18em; text-transform:uppercase; margin-top:4px;}
+  .top .sys span{color:var(--teal);}
+  .top .hero{margin-left:auto; text-align:right; line-height:1;}
+  .top .hero .n{font-family:Impact,"Arial Narrow",sans-serif; font-style:italic; font-size:clamp(22px,2.6vw,46px);
+    font-weight:900; color:var(--amber); text-shadow:0 0 26px var(--glow);}
+  .top .hero .lbl{font-size:clamp(7px,.66vw,10px); color:var(--dim); letter-spacing:.2em; text-transform:uppercase; margin-top:4px;}
+  .livedot{display:inline-block; width:7px; height:7px; border-radius:50%; background:var(--red);
+    box-shadow:0 0 10px var(--red); animation:pulse 1.2s infinite; margin-right:6px;}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.25}}
+
+  /* the wall — the timing-screen grid */
+  .wall{position:relative; z-index:5; height:calc(100vh - 118px); display:grid;
+    grid-template-columns:repeat(auto-fill, minmax(248px, 1fr));
+    grid-auto-rows:1fr; gap:8px; padding:8px clamp(12px,1.4vw,24px); overflow:auto;}
+
+  /* pit-board tile */
+  .t{position:relative; background:var(--panel); border:1px solid var(--line); border-radius:4px;
+    display:flex; flex-direction:column; min-height:0; overflow:hidden;
+    box-shadow:inset 0 0 50px rgba(0,0,0,.6), 0 2px 0 rgba(0,0,0,.4); backdrop-filter:blur(2px);}
+  /* checkered top-corner tab */
+  .t::before{content:""; position:absolute; top:0; right:0; width:26px; height:8px; z-index:2; opacity:.7;
+    background:repeating-conic-gradient(#0a0a0c 0% 25%, var(--amber) 0% 50%) 0 0 / 8px 8px;}
+  .th{display:flex; align-items:center; gap:7px; padding:5px 9px; border-bottom:2px solid var(--red);
+    font-family:"Arial Narrow",Impact,sans-serif; font-weight:700;
+    font-size:clamp(9px,.75vw,11px); letter-spacing:.14em; text-transform:uppercase; color:var(--amber);
+    white-space:nowrap; background:linear-gradient(180deg,rgba(225,6,0,.14),rgba(0,0,0,.3)); flex:none;}
+  .th .led{width:6px; height:6px; border-radius:50%; background:var(--amber-dim); box-shadow:0 0 6px transparent; flex:none;}
+  .th .led.on{background:var(--teal); box-shadow:0 0 7px var(--teal);}
+  .th .led.warn{background:var(--red); box-shadow:0 0 7px var(--red);}
+  .th .id{margin-left:auto; color:var(--dim); letter-spacing:.12em; font-size:9px;}
+  .act{margin-left:auto; font-size:8px; letter-spacing:.16em; padding:1px 6px; border-radius:2px;
+    border:1px solid currentColor; color:var(--amber-d);}
+  .act.a1{color:var(--amber);} .act.a2{color:var(--violet);} .act.cx{color:var(--teal); box-shadow:0 0 8px rgba(82,214,196,.4);}
+  .th .id+.act{margin-left:8px;}
+  .bd{flex:1; min-height:0; overflow:hidden; padding:8px 9px; font-size:11px; line-height:1.5;}
+  .t.wide{grid-column:span 2;} .t.tall{grid-row:span 2;}
+  .empty{color:var(--dim); font-size:10px; letter-spacing:.18em; text-transform:uppercase; padding:14px 2px; text-align:center;}
+  .scrollcol{display:flex; flex-direction:column-reverse; gap:2px; height:100%; overflow:hidden;}
+
+  /* cam tile */
+  .cam{position:relative; background:#000; height:100%; min-height:0;}
+  .cam img{width:100%; height:100%; object-fit:cover; display:block; filter:contrast(1.08) saturate(.85);}
+  .cam .ovl{position:absolute; left:7px; top:6px; font-size:9px; letter-spacing:.2em; color:var(--amber); text-shadow:0 0 8px #000;}
+  .cam .stat{position:absolute; right:7px; bottom:6px; font-size:9px; letter-spacing:.12em; color:var(--teal); text-shadow:0 0 8px #000;}
+  .cam .sl{position:absolute; left:0; right:0; height:2px; background:linear-gradient(90deg,transparent,var(--amber),transparent); opacity:.6; animation:vscan 3.4s linear infinite;}
+  @keyframes vscan{0%{top:0}100%{top:100%}}
+  .cam.off img{display:none;}
+  .cam.off::after{content:"◢ SIGNAL LOST"; position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+    color:var(--red); letter-spacing:.26em; font-size:11px; text-shadow:0 0 12px var(--red);}
+
+  /* generic rows */
+  .kv{display:flex; justify-content:space-between; gap:8px; padding:3px 0; border-bottom:1px solid rgba(232,164,76,.08);}
+  .kv .k{color:var(--dim); font-size:10px; letter-spacing:.1em; text-transform:uppercase;}
+  .kv .v{color:var(--txt); text-align:right;}
+  .kv .v.tl{color:var(--teal);} .kv .v.am{color:var(--amber);}
+  .big{font-size:clamp(20px,2.2vw,30px); font-weight:200; color:var(--amber); letter-spacing:.02em; text-shadow:0 0 22px var(--glow);}
+  .sub{font-size:9px; color:var(--dim); letter-spacing:.2em; text-transform:uppercase; margin-top:2px;}
+  a{color:var(--teal); text-decoration:none;}
+
+  /* cognition */
+  .th2{font-size:11px; line-height:1.45; padding:5px 0 5px 9px; border-left:2px solid var(--amber-dim); animation:sl .3s ease;}
+  @keyframes sl{from{opacity:0;transform:translateX(-6px)}to{opacity:1}}
+  .th2 .who{font-size:8px; letter-spacing:.18em; text-transform:uppercase; color:var(--amber-d); margin-right:6px;}
+  .th2.decision{border-left-color:var(--teal); color:#fff;} .th2.decision .who{color:var(--teal);}
+  .th2.offer{border-left-color:var(--amber);} .th2.plan{border-left-color:var(--amber-dim); color:var(--dim);}
+
+  /* ledger rows */
+  .oc{display:grid; grid-template-columns:auto 1fr auto; gap:7px; align-items:center; padding:4px 0;
+    border-bottom:1px solid var(--line); font-size:10px; animation:sl .3s ease;}
+  .oc .kk{font-size:8px; letter-spacing:.1em; padding:2px 5px; border:1px solid currentColor; border-radius:2px; text-align:center;}
+  .oc .dd{color:var(--txt); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .oc .ts{color:var(--dim); font-size:8px;}
+
+  /* system bus rows */
+  .be{display:grid; grid-template-columns:auto auto 1fr auto; gap:6px; align-items:baseline; padding:3px 0;
+    border-bottom:1px solid rgba(232,164,76,.07); font-size:10px; animation:sl .25s ease;}
+  .be .lyr{font-size:7px; letter-spacing:.1em; padding:1px 4px; border-radius:2px; text-transform:uppercase;}
+  .be .lyr.chain{color:var(--amber); border:1px solid var(--amber-dim);}
+  .be .lyr.backend{color:var(--violet); border:1px solid var(--violet);}
+  .be .lyr.robot{color:var(--teal); border:1px solid var(--teal);}
+  .be .lyr.reason{color:var(--dim); border:1px solid var(--amber-dim);}
+  .be .kn{color:var(--dim); font-size:8px; letter-spacing:.08em; text-transform:uppercase;}
+  .be .dt{color:var(--txt); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .be .mt{color:var(--dim); font-size:8px; white-space:nowrap;}
+  .be.warn .dt{color:var(--amber);} .be.error .dt{color:var(--red);}
+  .be.error .lyr{color:var(--red); border-color:var(--red);}
+  .pend{display:flex; justify-content:space-between; gap:8px; font-size:10px; padding:3px 0;
+    border-bottom:1px solid rgba(232,164,76,.08); color:var(--amber);}
+  .pend .sp{display:inline-block; width:7px; height:7px; border-radius:50%; background:var(--amber);
+    box-shadow:0 0 7px var(--amber); animation:pulse 1s infinite; margin-right:5px;}
+  .pend .el{color:var(--dim); font-size:8px;}
+
+  /* gauges */
+  .gauge{height:7px; background:rgba(232,164,76,.12); border-radius:4px; overflow:hidden; margin:5px 0;}
+  .gauge>div{height:100%; transition:width .8s ease;}
+  .bars{display:flex; align-items:flex-end; gap:2px; height:34px; margin-top:4px;}
+  .bars i{flex:1; background:linear-gradient(180deg,var(--teal),transparent); opacity:.5; border-radius:1px; animation:eq 1.4s ease-in-out infinite;}
+  @keyframes eq{0%,100%{height:18%}50%{height:90%}}
+
+  /* stack rail tile */
+  .chips{display:flex; flex-wrap:wrap; gap:5px; align-content:flex-start; height:100%; overflow:hidden;}
+  .chip{font-size:8px; letter-spacing:.12em; text-transform:uppercase; padding:4px 7px; border:1px solid var(--amber-dim);
+    border-radius:2px; color:var(--amber-dim); opacity:.45; transition:.6s;}
+  .chip.lit{opacity:1; color:var(--amber); border-color:var(--amber); box-shadow:0 0 10px var(--glow);}
+
+  .proofimg{width:100%; aspect-ratio:16/10; object-fit:cover; border:1px solid var(--line); border-radius:2px; background:#000;}
+  .hash{font-size:9px; color:var(--teal); letter-spacing:.06em; word-break:break-all; margin-top:5px;}
+  .hash b{color:var(--amber);}
+
+  #boot{position:fixed; inset:0; z-index:200; background:var(--void); display:flex; flex-direction:column;
+    align-items:center; justify-content:center; gap:14px; letter-spacing:.3em; transition:opacity .8s;}
+  #boot.gone{opacity:0; pointer-events:none;}
+  #boot .big{font-family:Impact,"Arial Narrow",sans-serif; font-style:italic; font-weight:900;
+    font-size:clamp(30px,6vw,90px); letter-spacing:.02em; color:var(--amber); text-shadow:3px 3px 0 var(--red), 0 0 40px var(--glow);}
+  #boot .bl{color:var(--txt); font-size:12px; min-height:16px; letter-spacing:.3em;}
+  #boot .flag{width:min(70vw,520px); height:18px; background:repeating-conic-gradient(#0a0a0c 0% 25%, #f6f4ee 0% 50%) 0 0 / 26px 26px;}
+  ::-webkit-scrollbar{width:7px;height:7px;} ::-webkit-scrollbar-thumb{background:var(--red);border-radius:3px;}
+</style>
+</head>
+<body>
+<div id="scan"></div><div id="vig"></div>
+<div id="boot"><div class="flag"></div><div class="big">CLANKER&nbsp;500</div><div class="bl" id="bootline">WARMING THE GRID…</div></div>
+
+<div class="checker"></div>
+<div class="top">
+  <div class="num">500</div>
+  <div>
+    <div class="ttl"><b>CLANKER 500</b> · ROVER GRAND PRIX</div>
+    <div class="sys">🏁 GRID <span id="nodes">0</span>/2 · ARC CIRCUIT <span id="chain">—</span> · RACE CLOCK <span id="clock">—</span></div>
+  </div>
+  <div class="hero">
+    <div class="n" id="settled">$0.00</div>
+    <div class="lbl"><span class="livedot"></span><em id="txcount">0</em> LAPS SETTLED · USDC/ARC</div>
+  </div>
+</div>
+
+<div class="wall">
+  <!-- GUARD cam -->
+  <div class="t tall"><div class="th"><span class="led" id="led-guard"></span>ONBOARD CAM · CAR 00<span class="id" id="cs-guard">guard.eth</span></div>
+    <div class="bd" style="padding:0"><div class="cam off" id="cam-guard"><span class="ovl">CAR 00 · GUARD</span><span class="sl"></span><span class="stat" id="stat-guard">—</span><img id="feed-guard" onerror="this.closest('.cam').classList.add('off')"/></div></div></div>
+
+  <!-- COURIER cam -->
+  <div class="t tall"><div class="th"><span class="led" id="led-courier"></span>ONBOARD CAM · CAR 01<span class="id" id="cs-courier">courier.eth</span></div>
+    <div class="bd" style="padding:0"><div class="cam off" id="cam-courier"><span class="ovl">CAR 01 · COURIER</span><span class="sl"></span><span class="stat" id="stat-courier">—</span><img id="feed-courier" onerror="this.closest('.cam').classList.add('off')"/></div></div></div>
+
+  <!-- COGNITION -->
+  <div class="t wide tall"><div class="th"><span class="led" id="led-gemma"></span>DRIVER ECU · GEMMA3<span class="id">0 CLOUD CALLS</span><span class="act a1">ACT 1</span></div>
+    <div class="bd"><div class="scrollcol" id="mind"><div class="empty">awaiting reasoning…</div></div></div></div>
+
+  <!-- SYSTEM BUS (live SSE: every layer) -->
+  <div class="t wide tall"><div class="th"><span class="led" id="led-bus"></span>🏁 RACE CONTROL · LIVE<span class="id" id="bus-rate">0/s</span></div>
+    <div class="bd"><div class="scrollcol" id="bus"><div class="empty">tuning the pit radio…</div></div></div></div>
+
+  <!-- PENDING TX -->
+  <div class="t"><div class="th"><span class="led" id="led-pending"></span>PIT STOP · IN-FLIGHT</div>
+    <div class="bd"><div class="big" id="pending-n" style="font-size:24px">0</div><div class="sub">laps settling on Arc</div>
+      <div id="pending-list" style="margin-top:5px"></div></div></div>
+
+  <!-- GAS / ROI -->
+  <div class="t"><div class="th"><span class="led"></span>FUEL · PURSE · NET</div>
+    <div class="bd"><div class="big" id="net-val" style="font-size:22px">$0.00</div><div class="sub">purse = settled − fuel</div>
+      <div class="kv"><span class="k">purse</span><span class="v am" id="roi-settled">$0.00</span></div>
+      <div class="kv"><span class="k">fuel burned</span><span class="v" id="roi-gas">$0.000</span></div>
+      <div class="kv"><span class="k">avg confirm</span><span class="v tl" id="roi-conf">—</span></div></div></div>
+
+  <!-- SETTLEMENT LEDGER -->
+  <div class="t tall"><div class="th"><span class="led" id="led-arc"></span>PIT WALL LEDGER · ARC<span class="id">5042002</span><span class="act a1">ACT 1</span></div>
+    <div class="bd"><div class="scrollcol" id="ledger"><div class="empty">awaiting settlement…</div></div></div></div>
+
+  <!-- MARKET DEMAND -->
+  <div class="t"><div class="th"><span class="led"></span>GRID DEMAND · DUTCH AUCTION<span class="act a1">ACT 1</span></div>
+    <div class="bd"><div class="big" id="demand-val">—</div><div class="sub">on-device demand signal</div>
+      <div class="gauge"><div id="demand-bar" style="width:0;background:var(--amber)"></div></div>
+      <div class="kv"><span class="k">sold</span><span class="v am" id="demand-n">0</span></div>
+      <div class="kv"><span class="k">avg rounds</span><span class="v" id="demand-r">—</span></div></div></div>
+
+  <!-- REPUTATION -->
+  <div class="t"><div class="th"><span class="led" id="led-8004"></span>DRIVER RATING · ERC-8004<span class="act a1">ACT 1</span></div>
+    <div class="bd"><div class="big" id="rep-val" style="color:var(--teal)">—</div><div class="sub">network mean score</div>
+      <div class="gauge"><div id="rep-bar" style="width:0;background:var(--teal)"></div></div>
+      <div class="kv"><span class="k">guard</span><span class="v tl" id="rep-guard">—</span></div>
+      <div class="kv"><span class="k">courier</span><span class="v tl" id="rep-courier">—</span></div></div></div>
+
+  <!-- ACT 2 · RACE -->
+  <div class="t"><div class="th"><span class="led" id="led-race"></span>THE MAIN EVENT · PARIMUTUEL<span class="act a2">ACT 2</span></div>
+    <div class="bd"><div class="kv"><span class="k">status</span><span class="v am" id="race-status">idle</span></div>
+      <div class="kv"><span class="k">pool</span><span class="v" id="race-pool">$0.00</span></div>
+      <div class="kv"><span class="k">guard odds</span><span class="v am" id="odds-guard">—</span></div>
+      <div class="kv"><span class="k">courier odds</span><span class="v am" id="odds-courier">—</span></div>
+      <div class="kv"><span class="k">bets</span><span class="v" id="race-bets">0</span></div>
+      <div class="kv"><span class="k">checkered flag · oracle</span><span class="v tl" id="race-winner">—</span></div></div></div>
+
+  <!-- ACT 2 · WORLD ID BETTING -->
+  <div class="t"><div class="th"><span class="led" id="led-world"></span>TRACKSIDE BETS · WORLD ID<span class="act a2">ACT 2</span></div>
+    <div class="bd"><div class="big" id="wid-bets" style="font-size:24px">0</div><div class="sub">bets · one human, one bet</div>
+      <div class="kv"><span class="k">verified humans</span><span class="v tl" id="wid-humans">0</span></div>
+      <div class="kv"><span class="k">action</span><span class="v" id="wid-action">—</span></div>
+      <div class="kv"><span class="k">status</span><span class="v am" id="wid-status">—</span></div></div></div>
+
+  <!-- ACT 2 · PILOT (x402) -->
+  <div class="t"><div class="th"><span class="led" id="led-pilot"></span>PIT CREW PILOT · x402<span class="act a2">ACT 2</span></div>
+    <div class="bd"><div class="big" id="pilot-state" style="font-size:20px">IDLE</div><div class="sub">$1.00 buys 120s · 250ms video</div>
+      <div class="kv"><span class="k">drive link</span><span class="v">/pilot.html</span></div>
+      <div class="kv"><span class="k">safety</span><span class="v tl">deadman · speed clamp</span></div>
+      <div class="kv"><span class="k">finish</span><span class="v" id="pilot-finish">—</span></div></div></div>
+
+  <!-- TREASURY -->
+  <div class="t"><div class="th"><span class="led" id="led-ledger"></span>WINNER’S PURSE · LEDGER<span class="act cx">CLIMAX</span></div>
+    <div class="bd"><div class="big" id="treas-bal">—</div><div class="sub">race winnings · USDC</div>
+      <div class="kv"><span class="k">owner</span><span class="v" id="treas-owner">—</span></div>
+      <div class="kv"><span class="k">custody</span><span class="v tl">human · hardware</span></div></div></div>
+
+  <!-- PROOF -->
+  <div class="t tall"><div class="th"><span class="led" id="led-walrus"></span>PHOTO FINISH · WALRUS<span class="id" id="proof-id">—</span><span class="act a1">ACT 1</span></div>
+    <div class="bd"><div id="proof"><div class="empty">no proof recorded</div></div></div></div>
+
+  <!-- CRE -->
+  <div class="t"><div class="th"><span class="led" id="led-cre"></span>RACE STEWARD · CHAINLINK CRE</div>
+    <div class="bd"><div id="cre"><div class="empty">awaiting DON consensus…</div></div></div></div>
+
+  <!-- GIBBERLINK -->
+  <div class="t"><div class="th"><span class="led" id="led-gibber"></span>PIT RADIO · GIBBERLINK<span class="id">0.9–1.1 kHz</span></div>
+    <div class="bd"><div class="bars" id="gbars"></div><div class="sub" style="margin-top:6px">data-over-sound · ggwave</div></div></div>
+
+  <!-- NETWORK LEADERBOARD -->
+  <div class="t wide"><div class="th"><span class="led" id="led-bq"></span>WORLD STANDINGS · BIGQUERY</div>
+    <div class="bd"><div class="scrollcol" id="bq"><div class="empty">querying network…</div></div></div></div>
+
+  <!-- STACK -->
+  <div class="t wide"><div class="th"><span class="led"></span>SPONSOR GRID</div>
+    <div class="bd"><div class="chips" id="rail">
+      <span class="chip" id="b-arc">Arc · x402</span><span class="chip" id="b-walrus">Walrus</span>
+      <span class="chip" id="b-ens">ENS</span><span class="chip" id="b-world">World ID</span>
+      <span class="chip" id="b-gemma">gemma3 · on-device</span><span class="chip" id="b-8004">ERC-8004</span>
+      <span class="chip" id="b-ledger">Ledger</span><span class="chip" id="b-cre">Chainlink CRE</span>
+      <span class="chip" id="b-privy">Privy custody</span><span class="chip" id="b-bq">BigQuery</span>
+    </div></div></div>
+</div>
+<div class="startline"></div>
+
+<script>
+const $=(id)=>document.getElementById(id), ex0="https://testnet.arcscan.app";
+let ex=ex0, lastCount=0;
+async function j(u){ try{ return await (await fetch(u)).json(); }catch{ return null; } }
+function led(id,state){ const e=$(id); if(!e)return; e.classList.toggle('on',state==='on'); e.classList.toggle('warn',state==='warn'); if(!state){e.classList.remove('on','warn');} }
+
+(function(){ const g=$("gbars"); for(let i=0;i<26;i++){const b=document.createElement("i"); b.style.animationDelay=(i*0.04)+"s"; b.style.height=(15+Math.abs(Math.sin(i*1.7))*30)+"%"; g.appendChild(b);} })();
+function clk(){ $("clock").textContent=new Date().toTimeString().slice(0,8); } clk(); setInterval(clk,1000);
+
+async function tick(){
+  const s=await j("/status");
+  if(s){
+    ex=(s.arc&&s.arc.explorer)||ex0;
+    if(s.arc) $("chain").textContent=s.arc.chainId||"—";
+    let live=0;
+    for(const n of ["guard","courier"]){
+      const r=s.robots&&s.robots[n], cam=$("cam-"+n), img=$("feed-"+n);
+      if(r){
+        if(r.ens) $("cs-"+n).textContent=r.ens;
+        const src=r.feed||(r.url?r.url+"/stream":null);
+        if(r.ok && src){ live++; cam.classList.remove("off"); if(img&&!img.src.endsWith(src)) img.src=src; led("led-"+n,"on"); }
+        else { cam.classList.add("off"); led("led-"+n,"warn"); }
+        const bv=typeof r.battery_v==="number"?r.battery_v:0;
+        $("stat-"+n).textContent=r.ok?bv.toFixed(2)+"V":"OFFLINE";
+      } else { cam.classList.add("off"); led("led-"+n,"warn"); }
+    }
+    $("nodes").textContent=live;
+    if(s.ens&&s.ens.courier&&s.ens.courier.resolved) $("b-ens").classList.add("lit");
+  }
+
+  const f=await j("/onchain/feed");
+  if(f){
+    if(typeof f.settledUsdc==="number"){ const el=$("settled"); el.textContent="$"+f.settledUsdc.toFixed(2);
+      el.style.color=f.settledUsdc>0?"var(--amber)":"#5a4a30"; }
+    if(typeof f.count==="number"){ $("txcount").textContent=f.count;
+      if(f.count>lastCount&&lastCount>0){ try{$("settled").animate([{filter:'brightness(2.4)'},{filter:'brightness(1)'}],{duration:700});}catch{} }
+      lastCount=f.count; if(f.count>0){ $("b-arc").classList.add("lit"); led("led-arc","on"); } }
+    if(f.events&&f.events.length){
+      $("ledger").innerHTML=f.events.slice(0,12).map(e=>{
+        const secs=Math.max(0,Math.round((Date.now()-e.t)/1000)), ts=secs<60?secs+"s":Math.round(secs/60)+"m";
+        const c={PAY:'#e8a44c',MINT:'#52d6c4',REPUTATION:'#b97a2c',BET:'#a98cff','RACE SETTLE':'#52d6c4'}[e.kind]||'#8a7a64';
+        const lk=e.tx?`<a target=_blank href="${e.explorer||ex+'/tx/'+e.tx}">${e.tx.slice(0,7)}…↗</a>`:'<span class=ts>pending</span>';
+        const m=[e.ms!=null?(e.ms/1000).toFixed(1)+'s':'', e.gasUsdc?'⛽$'+e.gasUsdc.toFixed(4):'', e.block?'#'+e.block:''].filter(Boolean).join(' · ');
+        return `<div class=oc><span class=kk style="color:${c}">${e.kind}</span><span class=dd>${e.detail}${m?`<div class=ts>${m}</div>`:''}</span><span>${lk}<div class=ts>${ts}</div></span></div>`;
+      }).join("");
+    }
+  }
+
+  const rz=await j("/reason/feed");
+  if(rz&&rz.events&&rz.events.length){
+    $("b-gemma").classList.add("lit"); led("led-gemma","on");
+    $("mind").innerHTML=rz.events.slice(0,14).map(e=>
+      `<div class="th2 ${e.kind||''}"><span class=who>${(e.robot||'').toUpperCase()} ${e.phase||''}</span>${e.text||''}</div>`).join("");
+    const g=$("gbars"); g.style.filter="brightness(1.7)"; led("led-gibber","on"); setTimeout(()=>{g.style.filter="";led("led-gibber",null);},700);
+  }
+
+  const l=await j("/learning");
+  if(l&&typeof l.demand==="number"){
+    $("demand-val").textContent=l.demand.toFixed(2);
+    $("demand-bar").style.width=(l.demand*100)+"%";
+    $("demand-bar").style.background=l.demand>0.6?'var(--teal)':l.demand<0.4?'var(--red)':'var(--amber)';
+    if(typeof l.n==="number") $("demand-n").textContent=l.n;
+    if(typeof l.avgRounds==="number") $("demand-r").textContent=l.avgRounds.toFixed(1);
+  }
+
+  const rep=await j("/reputation");
+  if(rep){
+    const fmt=v=>v&&v.count>0?Math.round(v.avg)+"/100":"—";
+    $("rep-guard").textContent=fmt(rep.guard); $("rep-courier").textContent=fmt(rep.courier);
+    const vals=Object.values(rep).filter(v=>v&&v.count>0);
+    if(vals.length){ $("b-8004").classList.add("lit"); led("led-8004","on");
+      const avg=vals.reduce((a,v)=>a+(v.avg||0),0)/vals.length;
+      $("rep-val").textContent=Math.round(avg)+"/100"; $("rep-bar").style.width=avg+"%"; }
+  }
+
+  const od=await j("/race/odds"), rs=await j("/race/state");
+  if(rs&&rs.status){ $("race-status").textContent=rs.status; led("led-race", rs.status==='racing'?'warn':'on');
+    const w=rs.winner?rs.winner.toUpperCase()+(rs.finishMs?` · ${(rs.finishMs/1000).toFixed(1)}s`:''):'—';
+    $("race-winner").textContent=w; $("pilot-finish").textContent=rs.winner?rs.winner.toUpperCase()+' wins':(rs.status==='racing'?'live':'—');
+  } else { led("led-race",null); }
+  let betCount=0;
+  if(od){ if(typeof od.total==="number") $("race-pool").textContent="$"+od.total.toFixed(2);
+    if(od.odds){ $("odds-guard").textContent=(od.odds.guard??"—")+"x"; $("odds-courier").textContent=(od.odds.courier??"—")+"x"; }
+    if(typeof od.count==="number"){ betCount=od.count; $("race-bets").textContent=od.count; } }
+
+  const wid=await j("/worldid/config");
+  if(wid){ $("b-world").classList.toggle('lit', !!wid.configured); led("led-world", wid.configured?'on':null);
+    $("wid-bets").textContent=betCount; $("wid-humans").textContent=betCount; // one bet per verified human (nullifier-gated)
+    if(wid.action) $("wid-action").textContent=wid.action;
+    $("wid-status").textContent=wid.configured?'gated · live':'unconfigured'; }
+
+  const ses=await j("/session/status");
+  if(ses){ const on=!!ses.authorized; led("led-pilot", on?'on':null);
+    $("pilot-state").textContent=on?'AUTHORIZED':'IDLE';
+    $("pilot-state").style.color=on?'var(--teal)':'var(--dim)'; }
+
+  const tr=await j("/treasury/info");
+  if(tr&&tr.deployed){ led("led-ledger","on"); $("b-ledger").classList.add("lit");
+    if(tr.balanceUsdc6) $("treas-bal").textContent="$"+(Number(tr.balanceUsdc6)/1e6).toFixed(2);
+    if(tr.owner) $("treas-owner").textContent=tr.owner.slice(0,6)+"…"+tr.owner.slice(-4); }
+
+  const cr=await j("/cre/latest");
+  if(cr){
+    if(cr.configured && cr.exists){
+      $("b-cre").classList.toggle('lit', cr.verified); led("led-cre", cr.verified?'on':'warn');
+      const col=cr.verified?'var(--teal)':'var(--red)';
+      const txln=cr.tx?`<div class=kv><span class=k>writeReport</span><span class=v><a href="${cr.explorer}/tx/${cr.tx}" target=_blank>${cr.tx.slice(0,8)}…↗</a></span></div>`:'';
+      $("cre").innerHTML=`<div class=kv><span class=k>DON score</span><span class=big style="font-size:20px;color:${col}">${cr.score}/100</span></div>
+        <div class="gauge"><div style="width:${cr.score}%;background:${col}"></div></div>
+        <div class=kv><span class=k>verdict</span><span class=v style="color:${col}">${cr.verified?'✓ VERIFIED':'✗ below 70'}</span></div>${txln}`;
+    } else if(cr.configured){ $("cre").innerHTML=`<div class=kv><span class=k>consumer</span><span class=v">live · awaiting</span></div>`; }
+  }
+
+  const bqd=await j("/leaderboard/network");
+  if(bqd){ const lit=!!bqd.configured && !bqd.error; $("b-bq").classList.toggle('lit', lit); led("led-bq", lit?'on':null);
+    if(bqd.configured && bqd.rows && bqd.rows.length){
+      $("bq").innerHTML=bqd.rows.slice(0,8).map((r,i)=>
+        `<div class=kv><span class=k>#${i+1} ${r.agent}</span><span class="v tl">${r.feedback} rev</span></div>`).join("");
+    } else if(bqd.configured){ $("bq").innerHTML=`<div class="empty">querying BigQuery…</div>`; }
+  }
+
+  const pv=await j("/privy/status");
+  if(pv){ $("b-privy").classList.toggle('lit', !!pv.configured); if(pv.custody==='privy-tee') $("b-privy").textContent='Privy · TEE custody'; }
+
+  const p=await j("/proof/latest");
+  if(p&&p.proof&&p.url){
+    $("b-walrus").classList.add("lit"); led("led-walrus","on");
+    $("proof-id").textContent=(p.proof.blobId||"").slice(0,8)+"…";
+    if($("proof").dataset.b!==p.proof.blobId){ $("proof").dataset.b=p.proof.blobId;
+      $("proof").innerHTML=`<img class="proofimg" src="${p.url}"/>
+        <div class="hash"><b>${p.proof.label||'proof'}</b></div>
+        <div class="hash">SHA-256 ${(p.proof.sha256||'').slice(0,22)}… ✓</div>`;
+    }
+  }
+}
+
+// ---- live event-push (SSE): the SYSTEM BUS, pending tx, gas/ROI ------------
+const busLog=[]; let gasTotal=0, settledTotal=0, confSum=0, confN=0, busTimes=[];
+const pendings=new Map();
+function fmtAgo(t){ const s=Math.max(0,Math.round((Date.now()-t)/1000)); return s<60?s+"s":Math.round(s/60)+"m"; }
+function renderBus(){
+  if(!busLog.length) return;
+  $("bus").innerHTML=busLog.slice(0,40).map(e=>{
+    const meta=[e.ms!=null?e.ms+"ms":"", e.gasUsdc?("⛽$"+e.gasUsdc.toFixed(4)):"", e.block?("#"+e.block):"",
+      e.tx?`<a target=_blank href="${e.explorer||(ex+'/tx/'+e.tx)}">${e.tx.slice(0,6)}…↗</a>`:""].filter(Boolean).join(" · ");
+    return `<div class="be ${e.severity||''}"><span class="lyr ${e.layer}">${e.layer}</span><span class=kn>${e.kind}</span><span class=dt>${e.detail||''}</span><span class=mt>${meta}</span></div>`;
+  }).join("");
+}
+function renderPending(){
+  $("pending-n").textContent=pendings.size;
+  led("led-pending", pendings.size>0?'warn':null);
+  $("pending-list").innerHTML=[...pendings.values()].sort((a,b)=>b.t-a.t).slice(0,5).map(p=>
+    `<div class=pend><span><span class=sp></span>${p.kind} ${p.detail||''}</span><span class=el>${fmtAgo(p.t)}</span></div>`).join("");
+}
+function renderRoi(){
+  $("roi-settled").textContent="$"+settledTotal.toFixed(2);
+  $("roi-gas").textContent="$"+gasTotal.toFixed(3);
+  $("net-val").textContent="$"+(settledTotal-gasTotal).toFixed(2);
+  $("roi-conf").textContent=confN?Math.round(confSum/confN)+"ms":"—";
+}
+function onBusEvent(e){
+  busTimes.push(Date.now()); busTimes=busTimes.filter(t=>Date.now()-t<5000);
+  $("bus-rate").textContent=(busTimes.length/5).toFixed(1)+"/s";
+  led("led-bus","on");
+  // pending lifecycle: chain events with extra.pending open; confirmed/error close
+  if(e.layer==="chain"){
+    if(e.extra&&e.extra.pending){ pendings.set(e.id,{t:e.t,kind:e.kind,detail:e.detail}); renderPending(); return; }
+    // a terminal chain event closes the matching pending (by kind+detail)
+    for(const[id,p]of pendings){ if(p.kind===e.kind){ pendings.delete(id); break; } }
+    renderPending();
+    if(typeof e.usdc==="number") settledTotal+=e.usdc;
+    if(typeof e.gasUsdc==="number") gasTotal+=e.gasUsdc;
+    if(typeof e.ms==="number"){ confSum+=e.ms; confN++; }
+    renderRoi();
+  }
+  if(e.kind==="ERROR"){ for(const[id]of pendings){ pendings.delete(id); } renderPending(); }
+  busLog.unshift(e); if(busLog.length>120) busLog.pop();
+  renderBus();
+}
+function connectBus(){
+  try{
+    const es=new EventSource("/events/stream");
+    es.onmessage=(m)=>{ try{ onBusEvent(JSON.parse(m.data)); }catch{} };
+    es.onerror=()=>{ led("led-bus","warn"); }; // EventSource auto-reconnects
+  }catch{ /* SSE unsupported — bus tile stays idle, polling tiles still work */ }
+}
+connectBus();
+setInterval(()=>{ renderPending(); if(busLog.length) renderBus(); }, 2000); // refresh "Ns ago"
+
+const boots=["WARMING THE GRID…","FORMATION LAP · *.rover.eth","ARC CIRCUIT GREEN · 5042002","ENGINES HOT · GEMMA3 ECU","🏁 GENTLEMEN, START YOUR CLANKERS"];
+let bi=0; const bt=setInterval(()=>{ bi++; if(bi<boots.length) $("bootline").textContent=boots[bi];
+  else { clearInterval(bt); $("boot").classList.add("gone"); } }, 480);
+tick(); setInterval(tick, 1800);
+</script>
+</body>
+</html>

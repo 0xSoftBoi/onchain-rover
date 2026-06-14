@@ -1,8 +1,19 @@
 # The Onchain Rover — 3-Minute Demo Runbook
 
-**Hard stop: 3:00.** Rehearse to **2:40** (live robots always cost ~20s). Two
-people: **Narrator** (talks, never touches a keyboard) + **Driver** (all clicks,
-watches the timer, calls cuts at 1:30 and 2:30).
+**Hard stop: 3:00.** Two people: **Narrator** (talks, never touches a keyboard) +
+**Driver** (all clicks, watches the timer).
+
+**Default mainline budgets to ~2:30, leaving real slack.** The live drag race is the
+highest-latency, highest-failure beat — it is **opt-in, not default**. Run it ONLY if
+the Driver's timer shows you at the pilot beat before **1:40**; otherwise skip straight
+to the Ledger climax (the auction already delivered "robots act economically").
+
+**Hard gate (Driver enforces):** *at 1:40, if the Ledger beat hasn't started, drop
+everything and go to the Ledger.* The closer must never be guillotined by the timer.
+
+**Decisions locked before rehearsal (no live "X or Y"):** the **Driver** pilots during
+the race (Narrator keeps talking); a **teammate** — never a judge — presses confirm on
+the Ledger.
 
 > Thesis line (memorize): *"Every agent at this hackathon is trapped behind a
 > screen. We gave them a body — robots you hire over HTTP, that earn an on-chain
@@ -44,9 +55,15 @@ Live camera feeds are embedded in Mission Control and Rover GP (robot `/stream`)
 7. **Arena**: tape a ~1.5m drag strip; fruit obstacles (apple/orange) past the
    midpoint; AprilTag (36h11) on each rover nose; finish-line camera (laptop
    webcam or guard) aimed across the line.
-8. **Shill bet** placed on Rover GP so odds aren't empty: tap one bet chip.
-9. **Backup video** of the full run open in a tab. **Travel router** so robots +
-   laptop are LAN-local; only chain RPC leaves the LAN.
+8. **Shill bet** placed on Rover GP so odds aren't empty: tap one bet chip — **with a
+   DIFFERENT World ID than the one judges will use**, or "one bet per human" silently
+   blocks the judge's live bet.
+9. **Backup video** of the full run open in a tab — **test-play it to the end, at
+   presentation volume, on the exact laptop/tab you'll demo from.** Confirm it includes
+   the auction audio and the Ledger signing. If the chain dies, this video IS the demo.
+10. **Travel router** so robots + laptop are LAN-local; only chain RPC leaves the LAN.
+    Keep a **phone hotspot** as the router fallback (the whole demo dies without LAN).
+11. **Judge's pilot phone charged** and on `/pilot.html`, session pre-authorized.
 
 ---
 
@@ -54,7 +71,7 @@ Live camera feeds are embedded in Mission Control and Rover GP (robot `/stream`)
 
 ### 0:00–0:20 · Thesis + the fleet is alive  → **Mission Control**
 - **Driver:** already on Mission Control. Point at the two live feeds, ENS names
-  (`guard.rover.eth` / `courier.rover.eth`), battery, and the **ERC-8004
+  (`guard.roverfleet.eth` / `courier.roverfleet.eth`), battery, and the **ERC-8004
   reputation** panel.
 - **Narrator:** the thesis line. *"These two are real on-chain agents — ENS
   identity, a reputation score, a USDC balance, and a human who stands behind
@@ -71,9 +88,12 @@ Live camera feeds are embedded in Mission Control and Rover GP (robot `/stream`)
   score ticks up** — the flywheel: job → proof → reputation → rank.
 
 ### 1:00–1:40 · Rover GP — the crowd drives  → **Pilot** (judge's phone) + **Rover GP** tab
-- **Driver:** hand the judge a phone already on `/pilot.html` (pre-authorized).
-  Switch the laptop to the **Rover GP** tab (dual feeds + live odds).
-- **Judge drives the courier** ~15s around an obstacle.
+- **Driver:** the phone is already connected, the session already started, and the
+  joystick already responding. Demonstrate one move first, **then hand over a live,
+  already-moving control** (no cold start to fumble). Switch the laptop to the
+  **Rover GP** tab (dual feeds + live odds).
+- **Judge drives the courier** ~15s around an obstacle. *If the judge freezes for 5s,
+  Narrator says "I'll take it" and Driver resumes — never wait in silence.*
 - **Narrator:** *"$1 over x402 buys a 120-second pilot session — 250ms video, and
   a deadman that stops the robot the instant the money or the connection stops.
   Spectators bet USDC on the race; one bet per human, enforced by World ID."*
@@ -96,9 +116,9 @@ Live camera feeds are embedded in Mission Control and Rover GP (robot `/stream`)
 - **Judge/teammate presses confirm on the device** → tx broadcasts → arcscan link.
 
 ### 2:50–3:00 · Close
-- **Narrator:** *"Identity, payments, reputation, a labor market, and human
-  governance — every sponsor doing real work, and a robot on the table the whole
-  time. That's the agent economy with a body."*
+- **Narrator:** *"Every agent here lives behind a screen. Ours is sitting on your
+  table — it earns its own money, builds its own reputation, and still can't touch a
+  dollar without a human. That's the agent economy with a body."*
 
 ---
 
@@ -106,6 +126,12 @@ Live camera feeds are embedded in Mission Control and Rover GP (robot `/stream`)
 - **Robot IP drifted / API down:** `ssh jetson@<ip> 'sudo fuser -k 8000/tcp; cd ~/ugv_jetson && setsid nohup env ROBOT_ROLE=<role> PEER_ROBOT_URL=http://<peer>:8000 ./ugv-env/bin/python -m uvicorn api:app --host 0.0.0.0 --port 8000 >/tmp/api.log 2>&1 </dev/null &'`.
 - **GibberLink garbled by room noise:** it auto-mirrors over the network — say
   *"too loud in here, they fell back to the network — same signed handshake."*
+- **Guard speaker dead (protects the #1 beat):** the auction text streams on Mission
+  Control in real time — point at the live transcript: *"they're haggling over the
+  wire — here's the negotiation."*
+- **Race finish not detected (AprilTag/oracle miss):** Driver manually clicks the
+  winner button — the guard's verdict is the on-chain record either way; narrate
+  *"guard's camera called it."*
 - **Courier stalls mid-race:** guard is the hot spare; run the auction beat
   stationary. The auction + Ledger beats need no driving.
 - **Chain RPC hiccup / tx slow:** *"Arc settles in ~2s, here's the confirmation"*
