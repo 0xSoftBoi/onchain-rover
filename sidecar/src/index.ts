@@ -32,6 +32,7 @@ import * as raceStore from "./race-store.js";
 import * as robotLink from "./robot-link.js";
 import * as rounds from "./rounds.js";
 import * as settle from "./settle.js";
+import * as eip3009 from "./eip3009.js";
 import * as stakeAdapters from "./stake-adapter.js";
 import * as telemetryTrace from "./telemetry-trace.js";
 import * as treasuryLedger from "./treasury-ledger.js";
@@ -537,7 +538,7 @@ type AuctionState = {
 const auctions = new Map<string, AuctionState>();
 
 app.post("/race/auction/start", async (req, res) => {
-  const { auctionId, settle: doSettle = false } = req.body;
+  const { auctionId, settle: doSettle = false, payMode = "transfer" } = req.body;
   const st: AuctionState = { settle: doSettle, note: "starting…" };
   auctions.set(auctionId, st);
   res.json({ started: true, auctionId });
@@ -570,9 +571,21 @@ app.post("/race/auction/start", async (req, res) => {
       st.agreed = true; st.buyer = deal.buyer; st.price = deal.price;
       st.note = "sold — settling on Arc…";
       if (doSettle) {
-        const pay = await settle.pay("courier", "guard", String(deal.price));
-        st.pay = pay.tx;
-        logOnchain("PAY", `courier → guard $${deal.price} USDC`, pay.tx, Number(deal.price));
+        // payMode "eip3009": buyer signs a gasless USDC authorization, it travels
+        // robot->robot over GibberLink, seller verifies + submits. Else plain transfer().
+        let payTx: string;
+        if (payMode === "eip3009") {
+          const g = await eip3009.settleOverGibber("courier", "guard", String(deal.price));
+          payTx = g.tx;
+          logOnchain("PAY",
+            `x402/EIP-3009 over GibberLink · courier signed → guard settled $${deal.price} · buyer gas $0`,
+            g.tx, Number(deal.price));
+        } else {
+          const pay = await settle.pay("courier", "guard", String(deal.price));
+          payTx = pay.tx;
+          logOnchain("PAY", `courier → guard $${deal.price} USDC`, pay.tx, Number(deal.price));
+        }
+        st.pay = payTx;
         const mint = await settle.mintPass("courier", String(deal.price));
         st.mint = mint.tx;
         logOnchain("MINT", `EventPass → courier @ $${deal.price}`, mint.tx);
