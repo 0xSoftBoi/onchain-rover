@@ -71,6 +71,7 @@ def act2():
     # the guard's finish camera calls the winner; settle anchors the proof
     cp.beat("guard judges finish + settle on Arc", "POST", f"{S}/race/finish",
             json_body={"winner": "courier"})
+    cp.emote(C, "win")                    # winner does a victory wiggle
     cp.say(G, "Courier takes it!", voice="texas")
     narrate("The GUARD robot is the race oracle — its finish photo goes to "
             "Walrus and settles the parimutuel pool on-chain.", 3)

@@ -138,16 +138,24 @@ def health():
 @app.post("/task")
 def task(req: TaskReq):
     """Full NL task -> plan -> drive -> photo proof. (Sidecar gates payment.)"""
-    return agent.execute_task(req.task, dry_run=req.dry_run,
-                              rover=_live_rover())
+    _live_emoter().set_driving(True)        # expression yields the wheels to nav
+    try:
+        return agent.execute_task(req.task, dry_run=req.dry_run,
+                                  rover=_live_rover())
+    finally:
+        _live_emoter().set_driving(False)
 
 
 @app.post("/seek")
 def seek(req: SeekReq):
     """Vision-guided seek: Gemini open-vocab with AprilTag fallback."""
     log_event("SEEK", req.target)
-    return perception.seek(req.target, timeout_secs=req.timeout_secs,
-                           rover=_live_rover())
+    _live_emoter().set_driving(True)
+    try:
+        return perception.seek(req.target, timeout_secs=req.timeout_secs,
+                               rover=_live_rover())
+    finally:
+        _live_emoter().set_driving(False)
 
 
 @app.post("/capture")
@@ -305,22 +313,20 @@ def say(req: TextReq):
 
 @app.post("/admit")
 def admit():
-    """Green-light beat: lights, OLED, voice, gimbal nod."""
-    r = _live_rover()
-    r.lights(255, 255)
-    r.oled(0, "ACCESS GRANTED")
-    r.gimbal(0, 30); time.sleep(0.4); r.gimbal(0, 0)  # nod
+    """Green-light beat: persona reaction (admitted) + OLED + voice."""
+    _live_rover().oled(0, "ACCESS GRANTED")
     log_event("✓ ADMIT", "access granted")
+    _live_emoter().react("admitted", cooldown=0.0)
     voice.say("Access granted. Welcome in.")
     return {"admitted": True}
 
 
 @app.post("/deny")
 def deny():
-    r = _live_rover()
-    r.lights(0, 0)
-    r.oled(0, "ACCESS DENIED")
+    """Red-light beat: persona reaction (rejected) + OLED + voice."""
+    _live_rover().oled(0, "ACCESS DENIED")
     log_event("✗ DENY", "no valid pass")
+    _live_emoter().react("rejected", cooldown=0.0)
     voice.say("Access denied. No valid pass detected.")
     return {"admitted": False}
 
@@ -332,6 +338,60 @@ def _live_rover():
     if _rover is None:
         _rover = Rover()
     return _rover
+
+
+# --- personality (emote.py) — WALL-E-style affect layer on the live rover ---
+import emote as emotemod
+
+_emoter = None
+def _live_emoter():
+    """Shared Emoter bound to this robot's role + the live serial singleton."""
+    global _emoter
+    if _emoter is None:
+        _emoter = emotemod.Emoter.for_role(role=ROLE, rover=_live_rover())
+        if os.environ.get("EMOTE_IDLE", "1") == "1":
+            _emoter.start_idle(watch_imu=os.environ.get("EMOTE_IMU", "1") == "1")
+    return _emoter
+
+
+class EmoteReq(BaseModel):
+    gesture: str
+
+
+class ReactReq(BaseModel):
+    event: str
+
+
+@app.post("/react")
+def react(req: ReactReq):
+    """Play a persona-coloured reaction to a story event (greeting, rejected,
+    admitted, negotiate, thinking, startled, win). Nudges the mood state too."""
+    _live_emoter().react(req.event)
+    log_event("EMOTE", req.event)
+    return {"ok": True, "state": _live_emoter().state()}
+
+
+@app.post("/emote")
+def emote_gesture(req: EmoteReq):
+    """Play a single named gesture (nod_yes, droop_sad, data_pulse, ...)."""
+    _live_emoter().gesture(req.gesture)
+    return {"ok": True, "gesture": req.gesture}
+
+
+@app.get("/mood")
+def mood():
+    """Current affect state (persona + valence/arousal + emotion dims)."""
+    return _live_emoter().state()
+
+
+@app.post("/appraise")
+def appraise():
+    """VLM-driven unscripted reaction: Gemini looks at the live camera frame,
+    picks an emotional reaction + utterance, and the rover performs it."""
+    frame = camera.latest()
+    ap = _live_emoter().appraise_and_react(frame)
+    log_event("APPRAISE", (ap or {}).get("reaction", "—"))
+    return {"ok": ap is not None, "appraisal": ap, "state": _live_emoter().state()}
 
 
 class DriveReq(BaseModel):

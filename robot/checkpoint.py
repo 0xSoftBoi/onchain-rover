@@ -57,6 +57,17 @@ def say(robot_url, text, voice=None):
     call("POST", f"{robot_url}/say", json_body=body, timeout=20)
 
 
+def emote(robot_url, event):
+    """Trigger a persona-coloured reaction on a rover (emote.py affect layer).
+    Best-effort: never blocks a beat if the robot has no /react endpoint."""
+    call("POST", f"{robot_url}/react", json_body={"event": event}, timeout=10)
+
+
+def appraise(robot_url):
+    """Let the rover look at its camera and react in-character (Gemini VLM)."""
+    call("POST", f"{robot_url}/appraise", timeout=30)
+
+
 def discover():
     """Resolve live robot URLs from the sidecar heartbeat registry; fall back
     to env. Confirms both robots + sidecar are up before the demo starts."""
@@ -100,8 +111,11 @@ def run():
         say(COURIER, "Arrived at the checkpoint.")
 
     # 2. speech greet -> recognize AI -> switch to GibberLink
+    emote(COURIER, "greeting")            # eager rookie perks up
     say(COURIER, "Hello, I have a delivery.")
+    emote(GUARD, "greeting")              # veteran scans the newcomer
     say(GUARD, "You sound like an agent. Switching to GibberLink.")
+    emote(COURIER, "handshake"); emote(GUARD, "handshake")   # synced data-pulse
 
     # 3. real SIGNED challenge from the sidecar; courier chirps it, guard hears.
     ok, challenge = beat("sidecar: sign courier challenge", "POST",
@@ -123,7 +137,9 @@ def run():
     holds = bool(verify.get("holdsPass")) if vok else False
 
     if not holds:
+        emote(GUARD, "negotiate")        # guard narrows its eyes (suspicious)
         beat("guard: DENY (imposter beat)", "POST", f"{GUARD}/deny")
+        emote(COURIER, "rejected")       # courier visibly droops — mood drops
 
         # 5. DUTCH AUCTION — robots reason over GibberLink to a price
         aid = f"checkpoint-{int(time.time())}"
@@ -151,6 +167,7 @@ def run():
 
     # 7. ADMIT — the physical payoff, always runs
     beat("guard: ADMIT", "POST", f"{GUARD}/admit")
+    emote(COURIER, "admitted")           # rookie celebrates — mood recovers
 
     # 8. proof: capture -> Walrus -> reputation. Walrus is free (no funds);
     #    feedback needs Arc gas but failure is non-fatal.
