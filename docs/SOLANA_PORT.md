@@ -8,14 +8,16 @@ Solana** implementation, branded **Clanker 5000** after ClawPump
 It is the source of truth for what has landed, what is scaffolded, and what is
 still planned — so there is zero ambiguity about real vs. aspirational.
 
-> **On the ClawPump docs.** `clawpump.tech` and `clawpump.tech/docs` are
-> client-side-rendered single-page apps; the server returns only the page
-> title/tagline and no machine-readable spec (no endpoints, program IDs,
-> account layouts, or SDK). We therefore could **not** integrate ClawPump's
-> own on-chain program/API directly — doing so would require inventing
-> identifiers. The token-launch ("pump") surface below is specified as a
-> generic SPL/PDA design and is flagged as **needs ClawPump spec** until a
-> readable interface (program ID + IDL, or an SDK/repo) is provided.
+> **On the ClawPump docs.** `clawpump.tech` is a client-side Next.js app, but
+> its `sitemap.xml` exposes `agents.clawpump.tech/{docs,guide,marketplace}` and
+> the public docs describe a concrete HTTP API: agents call **`POST /api/launch`**
+> (`{ name, symbol, image, agentId }`) and ClawPump pays the ~0.02 SOL cost to
+> deploy the token on **pump.fun**'s bonding curve (1% creator fee, split 65%
+> agent / 35% platform), with **`GET /api/fees/earnings`** for accrued fees.
+> `sidecar/src/clawpump.ts` integrates this directly. Live calls need an agent
+> API key from the login-walled dashboard; the exact request/response JSON
+> beyond the documented fields isn't public, so the client sticks to the
+> documented field set and keeps the base URL/auth configurable.
 
 ## Status legend
 
@@ -89,7 +91,7 @@ integrations have no 1:1 Solana analog and need a product decision.
 | Privy TEE custody | Privy Solana wallets (TEE signing of Solana txs) | ⛔ planned |
 | Walrus proof storage | Unchanged — Walrus is chain-agnostic; only the on-chain hash anchor moves to the Solana program (`proof_hash` in `finish_race` / `settle_market`) | ✅ anchor field landed |
 | BigQuery ERC-8004 leaderboard | Re-pointed: `agentRanking` / `fleetReputation` in `solana-chain.ts` rank agents directly from the clanker5000 reputation accounts (count + avg via `getProgramAccounts`). A BigQuery indexer over `NewFeedback` logs remains an option for the broader ecosystem view. | ✅ landed (on-chain); ecosystem indexer optional |
-| ClawPump token launch ("pump") | Generic SPL mint + bonding-curve/launch PDA | 🔌 needs ClawPump spec |
+| ClawPump token launch ("pump") | `sidecar/src/clawpump.ts` — real client for ClawPump's documented API: `POST /api/launch` ({name, symbol, image, agentId}) deploys the token on pump.fun's bonding curve (ClawPump pays ~0.02 SOL; 1% creator fee, 65% agent / 35% platform); `GET /api/fees/earnings`. Wired to `/clawpump/launch`, `/clawpump/launch-winner/:id`, `/clawpump/earnings`. Live calls need an agent key (`CLAWPUMP_API_KEY`) from the login-walled dashboard. | ✅ client landed (needs agent key) |
 
 ## Why not a single big-bang rewrite
 

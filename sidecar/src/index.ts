@@ -13,6 +13,7 @@ import { createHash } from "node:crypto";
 import { createServer } from "node:http";
 import { createGatewayMiddleware } from "@circle-fin/x402-batching/server";
 import { solanaPaymentGate, x402SolanaPublicConfig } from "./solana-x402.js";
+import * as clawpump from "./clawpump.js";
 
 import "./env.js"; // MUST be first — loads dotenv before any env-reading module
 import { ARC, ROBOTS, type RobotName } from "./config.js";
@@ -715,6 +716,37 @@ app.get("/chain/config", (_req, res) => {
 
 app.get("/x402/config", (_req, res) => {
   res.json(X402_SOLANA ? x402SolanaPublicConfig() : x402PublicConfig());
+});
+
+// ---------- ClawPump — launch the winner's agent token on Solana/pump.fun ----
+app.get("/clawpump/config", (_req, res) => res.json(clawpump.clawpumpConfig()));
+
+app.get("/clawpump/earnings", async (_req, res) => {
+  try { res.json(await clawpump.agentEarnings()); }
+  catch (e: any) { res.status(400).json({ error: e.message }); }
+});
+
+app.post("/clawpump/launch", async (req, res) => {
+  try {
+    const { name, symbol, image, agentId } = req.body ?? {};
+    if (!name || !symbol) throw new Error("name and symbol required");
+    res.json(await clawpump.launchAgentToken({ name, symbol, image, agentId }));
+  } catch (e: any) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Commemorate a settled race winner with a ClawPump token launch.
+app.post("/clawpump/launch-winner/:id", async (req, res) => {
+  try {
+    const round = rounds.getRound(req.params.id);
+    const launch = await clawpump.launchWinnerToken(round);
+    logOnchain("clawpump-launch", `winner token launched for round ${round.id}`,
+      typeof launch.tx === "string" ? launch.tx : undefined, undefined, { chain: "Solana" });
+    res.json({ round: round.id, winner: round.winner, launch });
+  } catch (e: any) {
+    res.status(400).json({ error: e.message });
+  }
 });
 
 app.get("/chain/health", async (_req, res) => {
