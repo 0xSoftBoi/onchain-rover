@@ -12,6 +12,7 @@ import express from "express";
 import { createHash } from "node:crypto";
 import { createServer } from "node:http";
 import { createGatewayMiddleware } from "@circle-fin/x402-batching/server";
+import { solanaPaymentGate, x402SolanaPublicConfig } from "./solana-x402.js";
 
 import "./env.js"; // MUST be first — loads dotenv before any env-reading module
 import { ARC, ROBOTS, type RobotName } from "./config.js";
@@ -50,7 +51,8 @@ app.use(express.json());
 // the live sidecar via ?api=<url>. Read-only demo surface, so allow all origins.
 app.use((req, res, next) => {
   res.set("Access-Control-Allow-Origin", "*");
-  res.set("Access-Control-Allow-Headers", "Content-Type, ngrok-skip-browser-warning");
+  res.set("Access-Control-Allow-Headers", "Content-Type, ngrok-skip-browser-warning, X-PAYMENT");
+  res.set("Access-Control-Expose-Headers", "X-PAYMENT-RESPONSE");
   res.set("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   if (req.method === "OPTIONS") return res.sendStatus(204);
   next();
@@ -214,13 +216,21 @@ const mockLearning = () => ({
   ],
 });
 
-const gateway = createGatewayMiddleware({
-  sellerAddress: process.env.TREASURY_ADDRESS!,    // fleet treasury (Ledger-governed)
-  facilitatorUrl: ARC.facilitatorUrl,              // testnet! default is mainnet
-  networks: [ARC.caip2],
-});
+// x402 backend: EVM uses Circle's Gateway middleware; Solana uses our SPL-USDC
+// gate (solana-x402.ts). The Gateway is only constructed for the EVM path so a
+// base58 TREASURY_ADDRESS never trips the EVM seller-address validation.
+const X402_SOLANA = (process.env.CHAIN_BACKEND ?? "evm").toLowerCase() === "solana";
+const gateway = X402_SOLANA
+  ? null
+  : createGatewayMiddleware({
+      sellerAddress: process.env.TREASURY_ADDRESS!,  // fleet treasury (Ledger-governed)
+      facilitatorUrl: ARC.facilitatorUrl,            // testnet! default is mainnet
+      networks: [ARC.caip2],
+    });
 const RACE_NETWORK_FEE_USDC = normalizeUsdcAmount(process.env.RACE_NETWORK_FEE_USDC ?? "0.25");
-const raceJoinFeeGate = gateway.require(`$${RACE_NETWORK_FEE_USDC}`);
+const payGate = (amount: string) =>
+  X402_SOLANA ? solanaPaymentGate(amount) : gateway!.require(amount);
+const raceJoinFeeGate = payGate(`$${RACE_NETWORK_FEE_USDC}`);
 const autoStartTimers = new Map<string, NodeJS.Timeout>();
 
 // Live robot registry — robots heartbeat their current IP here, so venue DHCP
@@ -350,7 +360,7 @@ app.get("/robot/registry", (_req, res) => {
 
 // ---------- PAID routes (x402 / Arc nanopayments) ---------------------------
 // Hire a robot for an NL task — the core "hire over HTTP" thesis.
-app.post("/task/:robot", gateway.require("$0.50"), async (req, res) => {
+app.post("/task/:robot", payGate("$0.50"), async (req, res) => {
   const r = await fetch(`${robot(req.params.robot).url}/task`, {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ task: (req.body as any).task }),
@@ -359,7 +369,7 @@ app.post("/task/:robot", gateway.require("$0.50"), async (req, res) => {
 });
 
 // Clanker500 GP: pay to pilot ($1 per 120s session).
-app.post("/pilot/:robot/start", gateway.require("$1.00"), async (req, res) => {
+app.post("/pilot/:robot/start", payGate("$1.00"), async (req, res) => {
   const payer = (req as any).payment?.payer ?? "anon";
   res.json(await race.startPilotSession(req.params.robot as RobotName, payer));
 });
@@ -704,7 +714,7 @@ app.get("/chain/config", (_req, res) => {
 });
 
 app.get("/x402/config", (_req, res) => {
-  res.json(x402PublicConfig());
+  res.json(X402_SOLANA ? x402SolanaPublicConfig() : x402PublicConfig());
 });
 
 app.get("/chain/health", async (_req, res) => {
@@ -1389,12 +1399,12 @@ function validateRaceJoinFeePreflight(
 
   const driver = round.drivers[slot];
   if (driver?.feePaid) throw new Error(`${slot} fee already paid`);
-  if (driver?.wallet && driver.wallet.toLowerCase() !== wallet) {
+  if (driver?.wallet && !sameWallet(driver.wallet, wallet)) {
     throw new Error(`${slot} is claimed by a different wallet`);
   }
 
   const otherSlot: rounds.DriverSlot = slot === "challenger" ? "opponent" : "challenger";
-  if (round.drivers[otherSlot]?.wallet.toLowerCase() === wallet) {
+  if (sameWallet(round.drivers[otherSlot]?.wallet, wallet)) {
     throw new Error("wallet already claimed the other slot");
   }
 }
@@ -1457,14 +1467,28 @@ function requireDriverSlot(value: unknown): rounds.DriverSlot {
   throw new Error("slot must be challenger or opponent");
 }
 
+// base58 (Bitcoin alphabet); a 32-byte Solana pubkey/token-account is 32–44 chars.
+const SOLANA_BASE58 = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
+
 function requireWalletAddress(value: unknown): string {
   const wallet = optionalString(value);
-  if (!isWalletAddress(wallet)) throw new Error("valid EVM wallet required");
-  return wallet.toLowerCase();
+  if (!isWalletAddress(wallet)) {
+    throw new Error(X402_SOLANA ? "valid Solana wallet required" : "valid EVM wallet required");
+  }
+  // Solana pubkeys are case-sensitive; only EVM addresses are normalized.
+  return X402_SOLANA ? wallet : wallet.toLowerCase();
 }
 
 function isWalletAddress(value: unknown): value is string {
-  return typeof value === "string" && /^0x[a-fA-F0-9]{40}$/.test(value.trim());
+  if (typeof value !== "string") return false;
+  const v = value.trim();
+  return X402_SOLANA ? SOLANA_BASE58.test(v) : /^0x[a-fA-F0-9]{40}$/.test(v);
+}
+
+/** Case-correct wallet equality (lowercase only for EVM). */
+function sameWallet(a?: string, b?: string): boolean {
+  if (!a || !b) return false;
+  return X402_SOLANA ? a === b : a.toLowerCase() === b.toLowerCase();
 }
 
 function optionalString(value: unknown): string | undefined {
