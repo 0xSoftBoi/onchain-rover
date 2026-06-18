@@ -25,6 +25,7 @@ import * as bq from "./bigquery.js";
 import * as lb from "./leaderboard.js";
 import * as race from "./race.js";
 import * as chain from "./chain.js";
+import * as clanker500 from "./clanker500-chain.js";
 import * as evidence from "./evidence.js";
 import * as fieldPreflight from "./field-preflight.js";
 import * as localDevWallets from "./local-dev-wallets.js";
@@ -891,6 +892,190 @@ app.post("/race/round/:id/claim-slot", (req, res) => {
 
 app.get("/race/rounds", (_req, res) => res.json({ rounds: rounds.listRounds() }));
 
+// ---------- Clanker500 stage race (native Base Sepolia ETH) ----------------
+app.get("/clanker500/config", (_req, res) => {
+  try { res.json(clanker500.clanker500Config()); }
+  catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+app.get("/clanker500/active", (_req, res) => {
+  try { res.json({ round: activeClankerRound(), config: clanker500.clanker500Config() }); }
+  catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+app.post("/clanker500/round", async (req, res) => {
+  try {
+    const config = clanker500.clanker500Config();
+    let round = rounds.createRound({
+      stakeUsdc: "0",
+      stakeAsset: "native-eth",
+      stakeWei: config.stakeWei,
+      stakeDisplay: config.stakeDisplay,
+      chainNetwork: "base-sepolia",
+      feeUsdc: "0",
+      durationSecs: Number(req.body?.durationSecs ?? 30),
+      countdownSecs: Number(req.body?.countdownSecs ?? 3),
+      challengeTtlSecs: Number(req.body?.challengeTtlSecs ?? 600),
+      stageCalibration: req.body?.stageCalibration ?? clankerStageCalibration(),
+    });
+    let openError: string | undefined;
+    if (req.body?.open !== false && process.env.CLANKER500_ESCROW_ADDRESS && process.env.CLANKER500_FACILITATOR_PRIVATE_KEY) {
+      try {
+        const opened = await clanker500.openRoundOnChain(round);
+        round = rounds.attachChainRace(round.id, opened.raceId, opened.tx);
+        logOnchain("CLANKER500 OPEN", `round ${round.id} opened on Base Sepolia`, opened.tx);
+      } catch (e: any) {
+        openError = e.message;
+      }
+    }
+    res.json({ round, config, openError });
+  } catch (e: any) { res.status(400).json({ error: e.message }); }
+});
+
+app.post("/clanker500/round/:id/claim-next-slot", (req, res) => {
+  try {
+    const wallet = requireWalletAddress(req.body?.wallet);
+    const round = rounds.getRound(req.params.id);
+    if (round.stakeAsset !== "native-eth") throw new Error("not a Clanker500 round");
+    const slot = nextClankerSlot(round, wallet);
+    const claimed = rounds.claimSlot(req.params.id, slot, {
+      wallet,
+      displayName: optionalString(req.body?.displayName) ?? shortWallet(wallet),
+    });
+    res.json({ round: claimed, slot, driver: claimed.drivers[slot] });
+  } catch (e: any) { res.status(400).json({ error: e.message }); }
+});
+
+app.post("/clanker500/round/:id/join-tx", async (req, res) => {
+  try {
+    const slot = requireDriverSlot(req.body?.slot);
+    const wallet = requireWalletAddress(req.body?.wallet);
+    let round = rounds.getRound(req.params.id);
+    if (round.stakeAsset !== "native-eth") throw new Error("not a Clanker500 round");
+    if (!round.chainRaceId) {
+      const opened = await clanker500.openRoundOnChain(round);
+      round = rounds.attachChainRace(round.id, opened.raceId, opened.tx);
+      logOnchain("CLANKER500 OPEN", `round ${round.id} opened on Base Sepolia`, opened.tx);
+    }
+    res.json(clanker500.buildJoinTransaction(round, slot, wallet));
+  } catch (e: any) { res.status(400).json({ error: e.message }); }
+});
+
+app.post("/clanker500/round/:id/confirm-join", async (req, res) => {
+  try {
+    const slot = requireDriverSlot(req.body?.slot);
+    const wallet = requireWalletAddress(req.body?.wallet);
+    const round = rounds.getRound(req.params.id);
+    if (round.stakeAsset !== "native-eth") throw new Error("not a Clanker500 round");
+    const verified = await clanker500.verifyJoinTransaction({
+      round,
+      slot,
+      wallet,
+      txHash: String(req.body?.txHash ?? ""),
+    });
+    const joined = rounds.markNativeChainJoined(req.params.id, slot, verified.tx, {
+      stakeWei: verified.stakeWei,
+      chainNetwork: "base-sepolia",
+    });
+    logOnchain("CLANKER500 JOIN", `${slot} staked ${joined.stakeDisplay ?? joined.stakeWei ?? "ETH"}`, verified.tx);
+    res.json({ round: joined, slot, verified });
+  } catch (e: any) { res.status(400).json({ error: e.message }); }
+});
+
+app.post("/clanker500/round/:id/lock", async (req, res) => {
+  try {
+    let round = rounds.getRound(req.params.id);
+    if (round.stakeAsset !== "native-eth") throw new Error("not a Clanker500 round");
+    if (round.status !== "ready" && round.status !== "locked") throw new Error("round is not ready");
+    if (round.chainStatus === "joined") {
+      const locked = await clanker500.lockRoundOnChain(round);
+      round = rounds.markChainLocked(req.params.id, locked.tx);
+      logOnchain("CLANKER500 LOCK", `round ${round.id} locked`, locked.tx);
+    }
+    if (round.status === "ready") {
+      round = req.body?.skipRobotAuth || process.env.ALLOW_FREE_PILOT === "1"
+        ? rounds.lockRoundLocal(req.params.id)
+        : await rounds.lockRound(req.params.id, (name) => robot(name).url);
+      evidence.recordRoundSnapshot(round, "locked");
+    }
+    res.json(round);
+  } catch (e: any) { res.status(400).json({ error: e.message }); }
+});
+
+app.post("/clanker500/round/:id/countdown", (req, res) => {
+  try {
+    const existing = rounds.getRound(req.params.id);
+    if (existing.stakeAsset !== "native-eth") throw new Error("not a Clanker500 round");
+    const round = rounds.startCountdown(req.params.id);
+    telemetryTrace.appendRoundTraceEvent(round, "countdown-start", {
+      countdownSecs: round.countdownSecs,
+      roundStartsAt: round.roundStartsAt ?? null,
+    }, { atMs: round.countdownStartedAt });
+    res.json(round);
+  } catch (e: any) { res.status(400).json({ error: e.message }); }
+});
+
+app.post("/clanker500/round/:id/start", async (req, res) => {
+  try {
+    let round = rounds.getRound(req.params.id);
+    if (round.stakeAsset !== "native-eth") throw new Error("not a Clanker500 round");
+    if (round.status !== "countdown") throw new Error(`expected countdown, got ${round.status}`);
+    if ((round.roundStartsAt ?? 0) > Date.now()) throw new Error("countdown has not finished");
+    if (round.chainStatus === "locked") {
+      const started = await clanker500.startRoundOnChain(round);
+      round = rounds.markChainStarted(req.params.id, started.tx);
+      logOnchain("CLANKER500 START", `round ${round.id} started on-chain`, started.tx);
+    }
+    round = rounds.startRace(req.params.id);
+    evidence.recordRoundSnapshot(round, "started");
+    telemetryTrace.appendRoundTraceEvent(round, "go", {
+      startedAt: round.startedAt ?? null,
+      durationSecs: round.durationSecs,
+    }, { atMs: round.startedAt });
+    res.json(round);
+  } catch (e: any) { res.status(400).json({ error: e.message }); }
+});
+
+app.post("/clanker500/round/:id/settle", async (req, res) => {
+  try {
+    let round = rounds.getRound(req.params.id);
+    if (round.stakeAsset !== "native-eth") throw new Error("not a Clanker500 round");
+    if (round.status !== "finished" && round.status !== "settled") throw new Error("round is not finished");
+    if (round.chainStatus !== "started" && round.chainStatus !== "finished" && round.chainStatus !== "settled") {
+      throw new Error("on-chain round is not ready to settle");
+    }
+    if (round.chainStatus === "started") {
+      round = ensureResultEvidence(round);
+      const finished = await clanker500.finishRoundOnChain(round);
+      round = rounds.markChainFinished(req.params.id, finished.tx);
+      logOnchain("CLANKER500 FINISH", `${round.winner} wins round ${round.id}`, finished.tx);
+    }
+    const settled = await clanker500.settleRoundOnChain(round);
+    round = rounds.markChainSettled(req.params.id, settled.tx);
+    evidence.recordRoundSnapshot(round, "settled");
+    const hashes = evidence.getEvidenceHash(round);
+    const finalRound = rounds.markEvidenceHashes(req.params.id, hashes.proofHash, hashes.evidenceHash);
+    logOnchain("CLANKER500 SETTLE", `${finalRound.winner} paid native ETH stake`, settled.tx);
+    res.json(finalRound);
+  } catch (e: any) { res.status(400).json({ error: e.message }); }
+});
+
+app.post("/clanker500/round/:id/cancel", async (req, res) => {
+  try {
+    let round = rounds.getRound(req.params.id);
+    const reason = String(req.body?.reason ?? "operator canceled");
+    if (round.stakeAsset !== "native-eth") throw new Error("not a Clanker500 round");
+    if (round.chainRaceId && round.chainStatus !== "canceled" && round.chainStatus !== "settled") {
+      const canceled = await clanker500.cancelRoundOnChain(round, reason);
+      round = rounds.markChainCanceled(req.params.id, canceled.tx, reason);
+      logOnchain("CLANKER500 CANCEL", reason, canceled.tx);
+    } else {
+      round = rounds.cancelRound(req.params.id, { code: "operator_cancel", reason });
+    }
+    res.json(round);
+  } catch (e: any) { res.status(400).json({ error: e.message }); }
+});
+
 app.get("/race/round/:id", (req, res) => {
   try { res.json(rounds.getRound(req.params.id)); }
   catch (e: any) { res.status(404).json({ error: e.message }); }
@@ -1418,6 +1603,48 @@ function requireWalletAddress(value: unknown): string {
   return wallet.toLowerCase();
 }
 
+function activeClankerRound(): rounds.Round | null {
+  return rounds.listRounds().find((round) =>
+    round.stakeAsset === "native-eth" &&
+    !["settled", "canceled"].includes(round.status)
+  ) ?? null;
+}
+
+function nextClankerSlot(round: rounds.Round, wallet: string): rounds.DriverSlot {
+  const normalized = wallet.toLowerCase();
+  for (const slot of ["challenger", "opponent"] as const) {
+    if (round.drivers[slot]?.wallet?.toLowerCase() === normalized) return slot;
+  }
+  if (!round.drivers.challenger?.wallet) return "challenger";
+  if (!round.drivers.opponent?.wallet) return "opponent";
+  throw new Error("Clanker500 heat is full");
+}
+
+function clankerStageCalibration() {
+  return {
+    laneLengthFt: 12,
+    laneWidthFt: 3,
+    startLineFt: 0,
+    finishLineFt: 12,
+    robotAssignments: {
+      challenger: { robot: "guard", lane: "left" },
+      opponent: { robot: "courier", lane: "right" },
+    },
+    speedDefaults: {
+      defaultSpeedMode: "medium",
+      maxSpeedMode: "medium",
+    },
+    safetyDefaults: {
+      obstacleStopDistanceFt: 1.5,
+      warningDistanceFt: 3,
+    },
+  };
+}
+
+function shortWallet(wallet: string): string {
+  return `${wallet.slice(0, 6)}...${wallet.slice(-4)}`;
+}
+
 function isWalletAddress(value: unknown): value is string {
   return typeof value === "string" && /^0x[a-fA-F0-9]{40}$/.test(value.trim());
 }
@@ -1641,6 +1868,10 @@ function pilotRoundState(round: rounds.Round, slot: rounds.DriverSlot) {
     id: round.id,
     status: round.status,
     stakeUsdc: round.stakeUsdc,
+    stakeAsset: round.stakeAsset ?? "usdc",
+    stakeWei: round.stakeWei,
+    stakeDisplay: round.stakeDisplay,
+    chainNetwork: round.chainNetwork,
     feeUsdc: round.feeUsdc,
     durationSecs: round.durationSecs,
     countdownSecs: round.countdownSecs,

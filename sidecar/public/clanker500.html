@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Clanker500</title>
+<style>
+  :root {
+    --bg:#06080b; --panel:#10161d; --panel2:#151d26; --line:#2b3745;
+    --txt:#f4f8fb; --dim:#98a9ba; --green:#43d17a; --yellow:#f2bd4d;
+    --red:#ff6262; --blue:#5aa7ff;
+  }
+  * { box-sizing:border-box; }
+  body {
+    margin:0; min-height:100vh; background:var(--bg); color:var(--txt);
+    font:15px/1.4 ui-monospace, Menlo, Consolas, monospace;
+  }
+  header {
+    display:flex; align-items:flex-end; justify-content:space-between; gap:18px;
+    padding:20px 24px; border-bottom:1px solid var(--line); background:#080d12;
+  }
+  h1 { margin:0; font-size:28px; letter-spacing:0; }
+  .sub { color:var(--dim); font-size:13px; }
+  main { display:grid; grid-template-columns:360px minmax(0,1fr); gap:18px; padding:18px; }
+  section { border:1px solid var(--line); background:var(--panel); border-radius:8px; padding:16px; }
+  h2 { margin:0 0 12px; color:var(--dim); font-size:12px; text-transform:uppercase; }
+  .qrwrap { display:grid; place-items:center; gap:12px; }
+  .qr { display:grid; place-items:center; width:260px; height:260px; background:#fff; border-radius:8px; }
+  .qr canvas { width:236px; height:236px; }
+  .link { width:100%; min-height:44px; padding:10px; overflow-wrap:anywhere; color:var(--dim); background:#0a1016; border:1px solid var(--line); border-radius:7px; }
+  .slots { display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:14px; }
+  .slot { min-height:260px; border:1px solid var(--line); background:var(--panel2); border-radius:8px; padding:16px; display:grid; align-content:space-between; gap:18px; }
+  .slot h3 { margin:0; font-size:22px; }
+  .big { font-size:40px; line-height:1.05; font-weight:800; }
+  .dim { color:var(--dim); }
+  .pill { display:inline-flex; align-items:center; min-height:28px; padding:4px 9px; border-radius:999px; border:1px solid var(--line); background:#0a1016; color:var(--dim); }
+  .ok { color:var(--green); } .warn { color:var(--yellow); } .bad { color:var(--red); }
+  .status { display:grid; grid-template-columns:repeat(4, minmax(0,1fr)); gap:12px; margin-top:14px; }
+  .metric { min-height:84px; background:var(--panel2); border:1px solid var(--line); border-radius:8px; padding:12px; }
+  .metric b, .metric span { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .metric span { color:var(--dim); font-size:12px; margin-bottom:5px; }
+  .actions { display:flex; flex-wrap:wrap; gap:8px; justify-content:flex-end; }
+  button, a.button {
+    display:inline-flex; align-items:center; justify-content:center; min-height:36px;
+    padding:8px 11px; border:1px solid rgba(255,255,255,.1); border-radius:7px;
+    background:#1f6feb; color:#fff; text-decoration:none; font:inherit; cursor:pointer;
+  }
+  button.secondary { background:#273342; }
+  button.good { background:#238636; }
+  button.warnBtn { background:#9a6700; }
+  button.badBtn { background:#a72b2b; }
+  button:disabled { opacity:.45; cursor:default; }
+  .log { margin-top:14px; max-height:140px; overflow:auto; white-space:pre-wrap; color:var(--dim); font-size:12px; }
+  @media (max-width:960px) {
+    main { grid-template-columns:1fr; }
+    .slots, .status { grid-template-columns:1fr; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>Clanker500</h1>
+    <div class="sub" id="headline">loading heat</div>
+  </div>
+  <div class="actions">
+    <button class="secondary" id="refresh">Refresh</button>
+    <button class="secondary" id="newHeat">New Heat</button>
+  </div>
+</header>
+<main>
+  <section>
+    <h2>Join</h2>
+    <div class="qrwrap">
+      <div class="qr"><canvas id="qr"></canvas></div>
+      <div class="link" id="joinLink">creating heat</div>
+      <span class="pill" id="stake">stake</span>
+    </div>
+  </section>
+
+  <section>
+    <h2>Racers</h2>
+    <div class="slots">
+      <div class="slot" id="challengerSlot"></div>
+      <div class="slot" id="opponentSlot"></div>
+    </div>
+    <div class="status">
+      <div class="metric"><span>round</span><b id="roundId">-</b></div>
+      <div class="metric"><span>local</span><b id="localStatus">-</b></div>
+      <div class="metric"><span>chain</span><b id="chainStatus">-</b></div>
+      <div class="metric"><span>winner</span><b id="winner">-</b></div>
+    </div>
+    <div class="actions" style="margin-top:14px">
+      <button class="good" id="lock">Lock</button>
+      <button class="secondary" id="countdown">Countdown</button>
+      <button class="good" id="start">Start</button>
+      <button class="good" id="settle">Settle</button>
+      <button class="badBtn" id="cancel">Cancel</button>
+    </div>
+    <div class="log" id="log"></div>
+  </section>
+</main>
+<script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.4/build/qrcode.min.js"></script>
+<script>
+const state = { round: null, config: null };
+const $ = (id) => document.getElementById(id);
+
+function log(msg) {
+  $("log").textContent = `[${new Date().toLocaleTimeString()}] ${msg}\n` + $("log").textContent;
+}
+
+async function getJson(path) {
+  const res = await fetch(path);
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok || json.error) throw new Error(json.error || `${path} failed`);
+  return json;
+}
+
+async function postJson(path, body = {}) {
+  const res = await fetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok || json.error) throw new Error(json.error || `${path} failed`);
+  return json;
+}
+
+async function ensureHeat(forceNew = false) {
+  if (!forceNew) {
+    const active = await getJson("/clanker500/active").catch(() => null);
+    if (active?.round) {
+      state.round = active.round;
+      state.config = active.config;
+      return;
+    }
+  }
+  const created = await postJson("/clanker500/round", {});
+  state.round = created.round;
+  state.config = created.config;
+  if (created.openError) log(`open pending: ${created.openError}`);
+}
+
+async function refresh() {
+  try {
+    if (!state.round?.id) await ensureHeat(false);
+    else state.round = await getJson(`/race/round/${encodeURIComponent(state.round.id)}`);
+    if (!state.config) state.config = await getJson("/clanker500/config");
+    render();
+  } catch (err) {
+    log(err.message);
+  }
+}
+
+function render() {
+  const round = state.round;
+  const config = state.config;
+  const readyCount = ["challenger", "opponent"].filter((slot) => round?.drivers?.[slot]?.chainJoined).length;
+  $("headline").textContent = round
+    ? `${readyCount}/2 racers staked · ${round.status}/${round.chainStatus || "not-opened"}`
+    : "no active heat";
+  $("stake").textContent = config?.stakeDisplay ? `${config.stakeDisplay} on Base Sepolia` : "stake unknown";
+  $("roundId").textContent = round?.id || "-";
+  $("localStatus").textContent = round?.status || "-";
+  $("chainStatus").textContent = round?.chainStatus || "-";
+  $("winner").textContent = round?.winner || "-";
+  renderSlot("challenger");
+  renderSlot("opponent");
+  renderJoinQr();
+}
+
+function renderSlot(slot) {
+  const driver = state.round?.drivers?.[slot] || {};
+  const root = $(`${slot}Slot`);
+  const label = slot === "challenger" ? "Left Lane" : "Right Lane";
+  const robot = driver.robot || (slot === "challenger" ? "guard" : "courier");
+  const wallet = driver.wallet ? `${driver.wallet.slice(0, 6)}...${driver.wallet.slice(-4)}` : "open";
+  const joined = driver.chainJoined ? "staked" : driver.wallet ? "claimed" : "waiting";
+  root.innerHTML = "";
+  const top = document.createElement("div");
+  top.innerHTML = `<h3>${label}</h3><div class="dim">${robot}</div>`;
+  const middle = document.createElement("div");
+  middle.innerHTML = `<div class="big">${wallet}</div>`;
+  const bottom = document.createElement("span");
+  bottom.className = `pill ${driver.chainJoined ? "ok" : driver.wallet ? "warn" : ""}`;
+  bottom.textContent = joined;
+  root.append(top, middle, bottom);
+}
+
+function renderJoinQr() {
+  if (!state.round?.id) return;
+  const url = new URL("/clanker500-join.html", location.origin);
+  url.searchParams.set("round", state.round.id);
+  $("joinLink").textContent = url.toString();
+  if (window.QRCode) {
+    window.QRCode.toCanvas($("qr"), url.toString(), { width: 236, margin: 1 }, (err) => {
+      if (err) log(`QR failed: ${err.message || err}`);
+    });
+  }
+}
+
+async function step(label, fn) {
+  try {
+    const result = await fn();
+    state.round = result.round || result;
+    log(label);
+    await refresh();
+  } catch (err) {
+    log(`${label} failed: ${err.message}`);
+  }
+}
+
+$("refresh").onclick = refresh;
+$("newHeat").onclick = () => step("new heat created", async () => {
+  await ensureHeat(true);
+  return state.round;
+});
+$("lock").onclick = () => step("heat locked", () => postJson(`/clanker500/round/${state.round.id}/lock`, { skipRobotAuth: true }));
+$("countdown").onclick = () => step("countdown started", () => postJson(`/clanker500/round/${state.round.id}/countdown`));
+$("start").onclick = () => step("race started", () => postJson(`/clanker500/round/${state.round.id}/start`));
+$("settle").onclick = () => step("settled", () => postJson(`/clanker500/round/${state.round.id}/settle`));
+$("cancel").onclick = () => step("canceled", () => postJson(`/clanker500/round/${state.round.id}/cancel`, { reason: "operator canceled" }));
+
+refresh();
+setInterval(refresh, 2500);
+</script>
+</body>
+</html>

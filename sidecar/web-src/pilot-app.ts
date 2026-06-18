@@ -26,6 +26,10 @@ type PilotRoundState = {
   status: string;
   chainRaceId?: string;
   stakeUsdc: string;
+  stakeAsset?: "usdc" | "native-eth";
+  stakeWei?: string;
+  stakeDisplay?: string;
+  chainNetwork?: string;
   feeUsdc: string;
   durationSecs: number;
   countdownSecs: number;
@@ -384,6 +388,10 @@ async function connect() {
 async function completeRaceEntryIfNeeded() {
   if (!roundId || raceEntryComplete) return;
   if (await useExistingRaceEntryIfReady()) return;
+  const round = await getPilotRound();
+  if (round.stakeAsset === "native-eth") {
+    throw new Error("Stake from the Clanker500 join screen first");
+  }
   const signer = createWalletSigner();
 
   setModalStatus(`Connecting ${signer.label}...`);
@@ -484,6 +492,10 @@ async function useExistingRaceEntryIfReady(): Promise<boolean> {
       status: round.status,
       chainRaceId: round.chainRaceId,
       stakeUsdc: round.stakeUsdc,
+      stakeAsset: round.stakeAsset,
+      stakeWei: round.stakeWei,
+      stakeDisplay: round.stakeDisplay,
+      chainNetwork: round.chainNetwork,
       feeUsdc: round.feeUsdc,
       durationSecs: round.durationSecs,
       countdownSecs: round.countdownSecs,
@@ -541,7 +553,9 @@ function renderRoundState() {
   const robot = driver?.robot || robotName;
   const lane = driver?.lane ? `/${driver.lane}` : "";
   els.slotState.textContent = roundId ? `${slotLabel}/${robot}${lane}` : "dev";
-  els.stakeState.textContent = roundState?.stakeUsdc ? `$${roundState.stakeUsdc}` : "--";
+  els.stakeState.textContent = roundState?.stakeAsset === "native-eth"
+    ? roundState.stakeDisplay ?? "ETH"
+    : roundState?.stakeUsdc ? `$${roundState.stakeUsdc}` : "--";
   els.feeState.textContent = roundState?.feeUsdc ? `$${roundState.feeUsdc}` : "--";
   updateRaceTimer();
 }

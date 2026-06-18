@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Join Clanker500</title>
+<style>
+  :root {
+    --bg:#06080b; --panel:#10161d; --line:#2b3745; --txt:#f4f8fb;
+    --dim:#98a9ba; --green:#43d17a; --red:#ff6262;
+  }
+  * { box-sizing:border-box; }
+  body {
+    margin:0; min-height:100vh; display:grid; place-items:center; padding:16px;
+    background:var(--bg); color:var(--txt); font:15px/1.45 ui-monospace, Menlo, Consolas, monospace;
+  }
+  main { width:min(520px, 100%); border:1px solid var(--line); background:var(--panel); border-radius:8px; padding:18px; display:grid; gap:14px; }
+  h1 { margin:0; font-size:24px; letter-spacing:0; }
+  .sub, .status { color:var(--dim); }
+  .row { display:grid; grid-template-columns:140px minmax(0,1fr); gap:10px; padding:8px 0; border-bottom:1px solid rgba(255,255,255,.07); }
+  .row:last-child { border-bottom:0; }
+  .row span:last-child { overflow-wrap:anywhere; }
+  button, a.button {
+    display:inline-flex; align-items:center; justify-content:center; min-height:42px;
+    padding:10px 12px; border:1px solid rgba(255,255,255,.12); border-radius:7px;
+    background:#1f6feb; color:#fff; text-decoration:none; font:inherit; cursor:pointer;
+  }
+  button:disabled, a.disabled { opacity:.45; cursor:default; pointer-events:none; }
+  .ok { color:var(--green); }
+  .bad { color:var(--red); }
+</style>
+</head>
+<body>
+<main>
+  <div>
+    <h1>Clanker500</h1>
+    <div class="sub" id="copy">Connect wallet to claim a racer slot.</div>
+  </div>
+  <div>
+    <div class="row"><span>round</span><span id="roundId">-</span></div>
+    <div class="row"><span>slot</span><span id="slot">-</span></div>
+    <div class="row"><span>stake</span><span id="stake">-</span></div>
+    <div class="row"><span>wallet</span><span id="wallet">-</span></div>
+    <div class="row"><span>tx</span><span id="tx">-</span></div>
+  </div>
+  <button id="connect">Connect Wallet</button>
+  <button id="stakeButton" disabled>Stake + Join</button>
+  <a class="button disabled" id="pilot" href="#">Open Controls</a>
+  <div class="status" id="status">waiting</div>
+</main>
+<script>
+const params = new URLSearchParams(location.search);
+const state = { roundId: params.get("round") || "", round: null, config: null, wallet: "", slot: "", txHash: "" };
+const $ = (id) => document.getElementById(id);
+
+function status(text, tone = "") {
+  $("status").textContent = text;
+  $("status").className = `status ${tone}`;
+}
+
+async function getJson(path) {
+  const res = await fetch(path);
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok || json.error) throw new Error(json.error || `${path} failed`);
+  return json;
+}
+
+async function postJson(path, body = {}) {
+  const res = await fetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok || json.error) throw new Error(json.error || `${path} failed`);
+  return json;
+}
+
+async function load() {
+  state.config = await getJson("/clanker500/config");
+  if (!state.roundId) {
+    const active = await getJson("/clanker500/active");
+    state.roundId = active.round?.id || "";
+  }
+  if (!state.roundId) throw new Error("no active Clanker500 heat");
+  state.round = await getJson(`/race/round/${encodeURIComponent(state.roundId)}`);
+  render();
+}
+
+function render() {
+  $("roundId").textContent = state.roundId || "-";
+  $("slot").textContent = state.slot || "-";
+  $("stake").textContent = state.config?.stakeDisplay ? `${state.config.stakeDisplay} on Base Sepolia` : "-";
+  $("wallet").textContent = state.wallet || "-";
+  $("tx").textContent = state.txHash || "-";
+  const pilot = $("pilot");
+  if (state.slot && state.round?.id) {
+    const driver = state.round.drivers?.[state.slot] || {};
+    const robot = driver.robot || (state.slot === "challenger" ? "guard" : "courier");
+    pilot.href = `/pilot.html?robot=${encodeURIComponent(robot)}&round=${encodeURIComponent(state.round.id)}&slot=${encodeURIComponent(state.slot)}&camera=local`;
+  }
+}
+
+async function connectWallet() {
+  if (!window.ethereum) throw new Error("EVM wallet required");
+  status("connecting wallet");
+  const accounts = await window.ethereum.request({ method: "eth_requestAccounts" });
+  state.wallet = accounts[0];
+  await ensureChain();
+  const claimed = await postJson(`/clanker500/round/${encodeURIComponent(state.roundId)}/claim-next-slot`, {
+    wallet: state.wallet,
+    displayName: shortWallet(state.wallet),
+  });
+  state.slot = claimed.slot;
+  state.round = claimed.round;
+  $("stakeButton").disabled = false;
+  status(`claimed ${state.slot}`, "ok");
+  render();
+}
+
+async function stakeAndJoin() {
+  if (!state.wallet || !state.slot) throw new Error("connect wallet first");
+  $("stakeButton").disabled = true;
+  status("building stake transaction");
+  const tx = await postJson(`/clanker500/round/${encodeURIComponent(state.roundId)}/join-tx`, {
+    wallet: state.wallet,
+    slot: state.slot,
+  });
+  await ensureChain();
+  status("confirm stake in wallet");
+  state.txHash = await window.ethereum.request({
+    method: "eth_sendTransaction",
+    params: [{
+      from: state.wallet,
+      to: tx.to,
+      value: tx.value,
+      data: tx.data,
+      chainId: tx.chain.chainIdHex,
+    }],
+  });
+  render();
+  status("waiting for confirmation");
+  const confirmed = await postJson(`/clanker500/round/${encodeURIComponent(state.roundId)}/confirm-join`, {
+    wallet: state.wallet,
+    slot: state.slot,
+    txHash: state.txHash,
+  });
+  state.round = confirmed.round;
+  $("pilot").classList.remove("disabled");
+  status("stake confirmed", "ok");
+  render();
+}
+
+async function ensureChain() {
+  const chain = state.config.chain;
+  try {
+    await window.ethereum.request({
+      method: "wallet_switchEthereumChain",
+      params: [{ chainId: chain.chainIdHex }],
+    });
+  } catch (err) {
+    if (Number(err?.code) !== 4902) throw err;
+    await window.ethereum.request({
+      method: "wallet_addEthereumChain",
+      params: [{
+        chainId: chain.chainIdHex,
+        chainName: chain.name,
+        rpcUrls: [chain.rpcUrl],
+        nativeCurrency: chain.nativeCurrency,
+        blockExplorerUrls: [chain.explorer],
+      }],
+    });
+  }
+}
+
+function shortWallet(wallet) {
+  return `${wallet.slice(0, 6)}...${wallet.slice(-4)}`;
+}
+
+$("connect").onclick = () => connectWallet().catch((err) => status(err.message, "bad"));
+$("stakeButton").onclick = () => stakeAndJoin().catch((err) => {
+  $("stakeButton").disabled = false;
+  status(err.message, "bad");
+});
+
+load().catch((err) => status(err.message, "bad"));
+</script>
+</body>
+</html>
