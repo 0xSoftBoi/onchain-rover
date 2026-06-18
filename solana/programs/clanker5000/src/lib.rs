@@ -25,6 +25,17 @@ declare_id!("Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS");
 /// so account space is deterministic.
 pub const MAX_RACERS: usize = 8;
 
+/// Parimutuel payout `floor(amount * total_pool / win_pool)`, computed in u128.
+/// A `u64 * u64` product always fits in a `u128`, so this can never overflow.
+/// Returns 0 when the winning pool is empty (no winning bets). Pure function so
+/// the money math is unit-testable without a validator (see `mod tests`).
+pub fn parimutuel_payout(amount: u64, total_pool: u64, win_pool: u64) -> u64 {
+    if win_pool == 0 {
+        return 0;
+    }
+    ((amount as u128) * (total_pool as u128) / (win_pool as u128)) as u64
+}
+
 #[program]
 pub mod clanker5000 {
     use super::*;
@@ -315,6 +326,9 @@ pub mod clanker5000 {
         m.pools = [0u64; MAX_RACERS];
         m.total_pool = 0;
         m.vault = ctx.accounts.vault.key();
+        m.settled_at = 0;
+        m.winning_proof_hash = [0u8; 32];
+        m.walrus_blob_id = String::new();
         m.bump = ctx.bumps.market;
         emit!(MarketOpened { market_id, num_racers });
         Ok(())
@@ -376,12 +390,19 @@ pub mod clanker5000 {
         proof_hash: [u8; 32],
         walrus_blob_id: String,
     ) -> Result<()> {
+        require!(walrus_blob_id.len() <= 64, ClankerError::StringTooLong);
         let m = &mut ctx.accounts.market;
         require!(m.open && !m.settled, ClankerError::BadState);
         require!(winner < m.num_racers, ClankerError::BadRacer);
         m.open = false;
         m.settled = true;
         m.winner = winner;
+        // Anchor the finish proof on-chain (parity with `finish_race`'s
+        // `race.proof_hash`) so the Walrus blob + verdict hash are queryable
+        // state, not just an emitted log.
+        m.winning_proof_hash = proof_hash;
+        m.walrus_blob_id = walrus_blob_id.clone();
+        m.settled_at = Clock::get()?.unix_timestamp;
         emit!(MarketSettled { market_id: m.market_id, winner, proof_hash, walrus_blob_id });
         Ok(())
     }
@@ -394,15 +415,7 @@ pub mod clanker5000 {
         require!(!bet.claimed, ClankerError::AlreadyClaimed);
         require!(bet.racer == m.winner, ClankerError::Lost);
 
-        let win_pool = m.pools[m.winner as usize];
-        let payout: u64 = if win_pool == 0 {
-            0
-        } else {
-            ((bet.amount as u128)
-                .checked_mul(m.total_pool as u128)
-                .ok_or(ClankerError::Overflow)?
-                / win_pool as u128) as u64
-        };
+        let payout = parimutuel_payout(bet.amount, m.total_pool, m.pools[m.winner as usize]);
         bet.claimed = true;
 
         if payout > 0 {
@@ -1123,6 +1136,10 @@ pub struct Market {
     pub pools: [u64; MAX_RACERS],
     pub total_pool: u64,
     pub vault: Pubkey,
+    pub settled_at: i64,
+    pub winning_proof_hash: [u8; 32],
+    #[max_len(64)]
+    pub walrus_blob_id: String,
     pub bump: u8,
 }
 
@@ -1415,4 +1432,49 @@ pub enum ClankerError {
     NotOwner,
     #[msg("reporter is not the authorized forwarder")]
     Unauthorized,
+}
+
+// ---------------------------------------------------------------------------
+// Unit tests (pure logic — run with `cargo test`, no validator required)
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::parimutuel_payout;
+
+    #[test]
+    fn empty_winning_pool_pays_zero() {
+        // No bets on the winning lane -> nobody can claim against an empty pool.
+        assert_eq!(parimutuel_payout(100, 500, 0), 0);
+    }
+
+    #[test]
+    fn sole_winner_takes_the_whole_pool() {
+        // One winner staked the entire winning pool -> they get every lamport.
+        assert_eq!(parimutuel_payout(100, 250, 100), 250);
+    }
+
+    #[test]
+    fn pro_rata_split_is_exact_when_divisible() {
+        // total 300, winning lane 200 split 120/80 -> 180/120, summing to total.
+        assert_eq!(parimutuel_payout(120, 300, 200), 180);
+        assert_eq!(parimutuel_payout(80, 300, 200), 120);
+        assert_eq!(180 + 120, 300);
+    }
+
+    #[test]
+    fn flooring_never_overpays_the_vault() {
+        // total 1000, winning lane = three equal 1-unit bets -> floor(1000/3)=333.
+        let each = parimutuel_payout(1, 1000, 3);
+        assert_eq!(each, 333);
+        // Dust (1000 - 999 = 1) stays in the vault; payouts never exceed it.
+        assert!(3 * each <= 1000);
+    }
+
+    #[test]
+    fn no_overflow_at_u64_extremes() {
+        // amount == win_pool so payout == total_pool even at the u64 ceiling;
+        // the intermediate u128 product (2^64-1)^2 cannot overflow.
+        assert_eq!(parimutuel_payout(u64::MAX, u64::MAX, u64::MAX), u64::MAX);
+    }
 }
