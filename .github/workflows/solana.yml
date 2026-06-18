@@ -25,8 +25,9 @@ concurrency:
 env:
   # Solana 2.x: its cargo-build-sbf ships a modern rustc that reads v4 Cargo.lock
   # (written by the host cargo check) and builds the program's modern deps. 1.18's
-  # build-sbf (rustc ~1.75) only understands lockfile v3.
-  SOLANA_VERSION: "2.2.21"
+  # build-sbf (rustc ~1.75) only understands lockfile v3. (2.1.21 is published on
+  # release.anza.xyz; 2.2.21 is not.)
+  SOLANA_VERSION: "2.1.21"
   ANCHOR_VERSION: "0.30.1"
 
 jobs:
@@ -69,8 +70,12 @@ jobs:
 
       - name: Install Solana CLI
         run: |
-          sh -c "$(curl -sSfL https://release.anza.xyz/v${SOLANA_VERSION}/install)"
+          # Download then run so a 404 fails the step instead of silently no-oping
+          # an empty `sh -c "$(curl ...)"`.
+          curl -sSfL "https://release.anza.xyz/v${SOLANA_VERSION}/install" -o /tmp/solana-install.sh
+          sh /tmp/solana-install.sh
           echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/share/solana/install/active_release/bin/solana" --version
 
       - name: Install Anchor CLI ${{ env.ANCHOR_VERSION }} (prebuilt via npm)
         run: |
