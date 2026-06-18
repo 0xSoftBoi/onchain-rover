@@ -574,6 +574,54 @@ pub mod clanker5000 {
         emit!(TreasuryOwnerChanged { new_owner });
         Ok(())
     }
+
+    // ----- AttestationConsumer (port of AttestationConsumer.sol, Chainlink CRE) --
+
+    /// Init the consensus-verdict gate. `forwarder` is the Chainlink forwarder
+    /// authorized to write reports; `Pubkey::default()` (all zeros) = unrestricted
+    /// (sim/demo), matching the EVM `forwarder == address(0)` escape hatch.
+    pub fn init_attestation(ctx: Context<InitAttestation>, forwarder: Pubkey) -> Result<()> {
+        let c = &mut ctx.accounts.attest_config;
+        c.owner = ctx.accounts.owner.key();
+        c.forwarder = forwarder;
+        c.bump = ctx.bumps.attest_config;
+        Ok(())
+    }
+
+    pub fn set_forwarder(ctx: Context<SetForwarder>, forwarder: Pubkey) -> Result<()> {
+        ctx.accounts.attest_config.forwarder = forwarder;
+        emit!(ForwarderSet { forwarder });
+        Ok(())
+    }
+
+    /// Land the DON's consensus verdict for a job (keyed by `job_hash` =
+    /// sha256/keccak of the job string, computed client-side). The robot's own
+    /// claim never settles anything — this is the verdict downstream reads via
+    /// `verified`. Reporter must be the configured forwarder (or any, if unset).
+    pub fn write_attestation(
+        ctx: Context<WriteAttestation>,
+        _job_hash: [u8; 32],
+        job: String,
+        score: u64,
+        proof_hash: [u8; 32],
+    ) -> Result<()> {
+        require!(job.len() <= 64, ClankerError::StringTooLong);
+        let cfg = &ctx.accounts.attest_config;
+        require!(
+            cfg.forwarder == Pubkey::default() || ctx.accounts.reporter.key() == cfg.forwarder,
+            ClankerError::Unauthorized
+        );
+        let verified = score >= ATTESTATION_THRESHOLD;
+        let a = &mut ctx.accounts.attestation;
+        a.score = score;
+        a.proof_hash = proof_hash;
+        a.timestamp = Clock::get()?.unix_timestamp;
+        a.verified = verified;
+        a.exists = true;
+        a.bump = ctx.bumps.attestation;
+        emit!(AttestationVerified { job, score, proof_hash, verified, timestamp: a.timestamp });
+        Ok(())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -596,6 +644,11 @@ pub const PASS_SEED: &[u8] = b"pass";
 pub const TREASURY_CONFIG_SEED: &[u8] = b"treasury_config";
 pub const TREASURY_VAULT_SEED: &[u8] = b"treasury_vault";
 pub const TREASURY_AUTH_SEED: &[u8] = b"treasury_auth";
+pub const ATTEST_CONFIG_SEED: &[u8] = b"attest_config";
+pub const ATTEST_SEED: &[u8] = b"attest";
+
+/// Consensus score required to settle (matches AttestationConsumer.THRESHOLD).
+pub const ATTESTATION_THRESHOLD: u64 = 70;
 
 // ---------------------------------------------------------------------------
 // Accounts: race escrow
@@ -972,6 +1025,52 @@ pub struct SetTreasuryOwner<'info> {
 }
 
 // ---------------------------------------------------------------------------
+// Accounts: AttestationConsumer
+// ---------------------------------------------------------------------------
+
+#[derive(Accounts)]
+pub struct InitAttestation<'info> {
+    #[account(
+        init,
+        payer = owner,
+        space = 8 + AttestConfig::INIT_SPACE,
+        seeds = [ATTEST_CONFIG_SEED],
+        bump
+    )]
+    pub attest_config: Account<'info, AttestConfig>,
+    #[account(mut)]
+    pub owner: Signer<'info>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct SetForwarder<'info> {
+    #[account(mut, seeds = [ATTEST_CONFIG_SEED], bump = attest_config.bump)]
+    pub attest_config: Account<'info, AttestConfig>,
+    #[account(constraint = owner.key() == attest_config.owner @ ClankerError::NotOwner)]
+    pub owner: Signer<'info>,
+}
+
+#[derive(Accounts)]
+#[instruction(job_hash: [u8; 32])]
+pub struct WriteAttestation<'info> {
+    #[account(seeds = [ATTEST_CONFIG_SEED], bump = attest_config.bump)]
+    pub attest_config: Account<'info, AttestConfig>,
+    #[account(mut)]
+    pub reporter: Signer<'info>,
+    // Upsert: re-reporting the same job overwrites the verdict (matches EVM).
+    #[account(
+        init_if_needed,
+        payer = reporter,
+        space = 8 + Attestation::INIT_SPACE,
+        seeds = [ATTEST_SEED, &job_hash],
+        bump
+    )]
+    pub attestation: Account<'info, Attestation>,
+    pub system_program: Program<'info, System>,
+}
+
+// ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
 
@@ -1102,6 +1201,25 @@ pub struct TreasuryConfig {
     pub bump: u8,
 }
 
+#[account]
+#[derive(InitSpace)]
+pub struct AttestConfig {
+    pub owner: Pubkey,
+    pub forwarder: Pubkey,
+    pub bump: u8,
+}
+
+#[account]
+#[derive(InitSpace)]
+pub struct Attestation {
+    pub score: u64,
+    pub proof_hash: [u8; 32],
+    pub timestamp: i64,
+    pub verified: bool,
+    pub exists: bool,
+    pub bump: u8,
+}
+
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, PartialEq, Eq, InitSpace)]
 pub enum RaceStatus {
     Created,
@@ -1228,6 +1346,18 @@ pub struct TreasuryWithdraw {
 pub struct TreasuryOwnerChanged {
     pub new_owner: Pubkey,
 }
+#[event]
+pub struct ForwarderSet {
+    pub forwarder: Pubkey,
+}
+#[event]
+pub struct AttestationVerified {
+    pub job: String,
+    pub score: u64,
+    pub proof_hash: [u8; 32],
+    pub verified: bool,
+    pub timestamp: i64,
+}
 
 // ---------------------------------------------------------------------------
 // Errors
@@ -1283,4 +1413,6 @@ pub enum ClankerError {
     BadPassId,
     #[msg("caller is not the treasury owner (Ledger approval required)")]
     NotOwner,
+    #[msg("reporter is not the authorized forwarder")]
+    Unauthorized,
 }

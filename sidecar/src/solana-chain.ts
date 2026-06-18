@@ -470,3 +470,92 @@ export async function buildTreasuryWithdraw(recipientTokenAccount: string, amoun
     },
   };
 }
+
+// ---- AttestationConsumer (port of AttestationConsumer.sol, Chainlink CRE) ---
+
+function attestConfigPda(): PublicKey {
+  return PublicKey.findProgramAddressSync([enc.encode("attest_config")], pid())[0];
+}
+function attestationPda(jobHash: Buffer): PublicKey {
+  return PublicKey.findProgramAddressSync([enc.encode("attest"), jobHash], pid())[0];
+}
+function jobHashOf(job: string): Buffer {
+  return createHash("sha256").update(job).digest();
+}
+
+/**
+ * Land a consensus verdict for a job. In production the Chainlink DON's
+ * forwarder signs this; for sim/demo the facilitator reports (allowed when the
+ * configured forwarder is the default/zero key).
+ */
+export async function writeAttestation(job: string, score: number, proofHashHex?: string) {
+  const p = program();
+  const jh = jobHashOf(job);
+  const hex = (proofHashHex ?? "").replace(/^0x/, "");
+  const proof = /^[a-fA-F0-9]{64}$/.test(hex)
+    ? Array.from(Buffer.from(hex, "hex"))
+    : new Array(32).fill(0);
+  const tx = await (p.methods as any)
+    .writeAttestation(Array.from(jh), job, new BN(score), proof)
+    .accounts({
+      attestConfig: attestConfigPda(),
+      reporter: facilitatorKeypair().publicKey,
+      attestation: attestationPda(jh),
+      systemProgram: SystemProgram.programId,
+    })
+    .rpc();
+  return { job, score, verified: score >= 70, tx };
+}
+
+export async function getAttestation(job: string) {
+  const acct = await (program().account as any).attestation.fetchNullable(attestationPda(jobHashOf(job)));
+  if (!acct) return { job, exists: false, verified: false };
+  return {
+    job,
+    exists: true,
+    verified: acct.verified,
+    score: acct.score.toString(),
+    proofHash: Buffer.from(acct.proofHash).toString("hex"),
+    timestamp: acct.timestamp.toString(),
+  };
+}
+
+/** The gate downstream settlement reads (mint/payment/reputation). */
+export async function isVerified(job: string): Promise<boolean> {
+  return (await getAttestation(job)).verified;
+}
+
+// ---- Leaderboard (re-point of leaderboard.ts to the on-chain reputation) ----
+
+function agentPda(agentId: number | bigint | string): PublicKey {
+  return PublicKey.findProgramAddressSync([enc.encode("agent"), leU64(agentId)], pid())[0];
+}
+
+/** Rank agents by the clanker5000 reputation accounts (count, then avg). */
+export async function agentRanking(limit = 20) {
+  const agents = await (program().account as any).agent.all();
+  return agents
+    .map((a: any) => {
+      const count = Number(a.account.count.toString());
+      const sum = Number(a.account.sum.toString());
+      return {
+        agentId: a.account.agentId.toString(),
+        owner: a.account.owner.toBase58(),
+        jobs: count,
+        avgScore: count ? sum / count : null,
+      };
+    })
+    .sort((x: any, y: any) => y.jobs - x.jobs || (y.avgScore ?? 0) - (x.avgScore ?? 0))
+    .slice(0, limit);
+}
+
+export async function fleetReputation(agentIds: Array<string | number | bigint>) {
+  return Promise.all(
+    agentIds.map(async (id) => {
+      const acct = await (program().account as any).agent.fetchNullable(agentPda(id));
+      const count = acct ? Number(acct.count.toString()) : 0;
+      const sum = acct ? Number(acct.sum.toString()) : 0;
+      return { agentId: id.toString(), jobs: count, avgScore: count ? sum / count : null };
+    })
+  );
+}

@@ -85,10 +85,10 @@ integrations have no 1:1 Solana analog and need a product decision.
 | `Treasury.sol` + Ledger ERC-7730 clear-sign | PDA treasury in `clanker5000` — `init_treasury` / `withdraw_treasury` (owner-gated) / `set_treasury_owner`. The sidecar never holds the owner key: `buildTreasuryWithdraw` returns the instruction for a physical Ledger Solana clear-sign. (Squads multisig is the optional upgrade.) | ✅ landed |
 | x402 + Circle/Arc (USDC-as-gas wages) | x402 has Solana support via SPL USDC; gas is SOL (no USDC-as-gas) | ⛔ planned — fee model differs |
 | World ID betting gate | Keep World ID proof off-chain; store the nullifier in the `nullifier` PDA (already wired in `place_bet`) | ✅ on-chain nullifier landed; off-chain verifier reuse planned |
-| Chainlink CRE `AttestationConsumer` (Sepolia) | **Switchboard** / Chainlink Solana functions writing the verdict to an attestation PDA | ⛔ planned |
+| Chainlink CRE `AttestationConsumer` (Sepolia) | Attestation consumer in `clanker5000` — `init_attestation` / `set_forwarder` / `write_attestation` (per-job PDA keyed by job hash, threshold 70, forwarder-gated with a zero-key sim escape hatch); `getAttestation`/`isVerified` reads in `solana-chain.ts`. A Switchboard/Chainlink-Solana DON writes the verdict. | ✅ landed |
 | Privy TEE custody | Privy Solana wallets (TEE signing of Solana txs) | ⛔ planned |
 | Walrus proof storage | Unchanged — Walrus is chain-agnostic; only the on-chain hash anchor moves to the Solana program (`proof_hash` in `finish_race` / `settle_market`) | ✅ anchor field landed |
-| BigQuery ERC-8004 leaderboard | Re-point to the Solana reputation program's events / an indexer | ⛔ planned |
+| BigQuery ERC-8004 leaderboard | Re-pointed: `agentRanking` / `fleetReputation` in `solana-chain.ts` rank agents directly from the clanker5000 reputation accounts (count + avg via `getProgramAccounts`). A BigQuery indexer over `NewFeedback` logs remains an option for the broader ecosystem view. | ✅ landed (on-chain); ecosystem indexer optional |
 | ClawPump token launch ("pump") | Generic SPL mint + bonding-curve/launch PDA | 🔌 needs ClawPump spec |
 
 ## Why not a single big-bang rewrite

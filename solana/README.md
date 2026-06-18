@@ -13,6 +13,7 @@ One Anchor program, `clanker5000`, replaces the two EVM settlement contracts:
 | `contracts/ReputationRegistry.sol` (ERC-8004) | `register_agent`, `give_feedback` (per-agent + per-feedback PDAs, running count/sum, `NewFeedback` event, self-feedback rejected) |
 | `contracts/EventPass.sol` | `init_event_pass`, `mint_pass` (PDA per id, minter-gated, price recorded; `holds` via off-chain getProgramAccounts) |
 | `contracts/Treasury.sol` | `init_treasury`, `withdraw_treasury` (owner/Ledger-gated), `set_treasury_owner` (PDA USDC vault) |
+| `contracts/AttestationConsumer.sol` (Chainlink CRE) | `init_attestation`, `set_forwarder`, `write_attestation` (per-job PDA, threshold 70, forwarder-gated; `isVerified` read) |
 
 ### Key design changes vs. the EVM contracts
 
