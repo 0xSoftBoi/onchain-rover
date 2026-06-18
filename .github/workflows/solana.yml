@@ -36,10 +36,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Anchor 0.30.1 builds against this toolchain; newer stable Rust can fail
-      # to compile the anchor-cli dependency tree.
-      - name: Install Rust 1.79.0
-        uses: dtolnay/rust-toolchain@1.79.0
+      # cargo check + anchor build run on current stable (the program's deps now
+      # pull edition2024 crates that only modern Cargo can parse). anchor-cli
+      # 0.30.1, however, must compile its old `time 0.3.29` on Rust <= 1.79, so it
+      # gets a dedicated 1.79.0 toolchain below.
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Add Rust 1.79.0 (anchor-cli build toolchain)
+        run: rustup toolchain install 1.79.0 --profile minimal
 
       - name: Cache cargo + build artifacts
         uses: actions/cache@v4
@@ -63,15 +68,14 @@ jobs:
           sh -c "$(curl -sSfL https://release.anza.xyz/v${SOLANA_VERSION}/install)"
           echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
 
-      # Install anchor-cli from a pinned checkout so `--locked` uses Anchor's own
-      # Cargo.lock — a bare `cargo install --git … --locked` re-resolves to latest
-      # transitive deps, which break on Rust 1.79 (`edition2024`) or newer Rust
-      # (`time 0.3.29`). The locked tree pins both to versions that build on 1.79.
+      # Build anchor-cli with the 1.79.0 toolchain from a pinned checkout so
+      # `--locked` uses Anchor's own Cargo.lock — that locks `time`/`toml_datetime`
+      # to pre-edition2024 versions which both parse and compile on 1.79.
       - name: Install Anchor CLI ${{ env.ANCHOR_VERSION }}
         run: |
           if ! command -v anchor >/dev/null 2>&1; then
             git clone --depth 1 --branch v${ANCHOR_VERSION} https://github.com/coral-xyz/anchor.git "$RUNNER_TEMP/anchor"
-            cargo install --path "$RUNNER_TEMP/anchor/cli" anchor-cli --locked --force
+            cargo +1.79.0 install --path "$RUNNER_TEMP/anchor/cli" anchor-cli --locked --force
           fi
           anchor --version
 
