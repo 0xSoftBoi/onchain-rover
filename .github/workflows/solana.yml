@@ -36,15 +36,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # cargo check + anchor build run on current stable (the program's deps now
-      # pull edition2024 crates that only modern Cargo can parse). anchor-cli
-      # 0.30.1, however, must compile its old `time 0.3.29` on Rust <= 1.79, so it
-      # gets a dedicated 1.79.0 toolchain below.
+      # cargo check + anchor build run on current stable. anchor-cli itself is
+      # installed PREBUILT from npm (the same mechanism setup-anchor uses), which
+      # sidesteps compiling Anchor 0.30.1's old `time`/`edition2024` deps from
+      # source — the conflict that blocks every host Rust version.
       - name: Install Rust (stable)
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Add Rust 1.79.0 (anchor-cli build toolchain)
-        run: rustup toolchain install 1.79.0 --profile minimal
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
 
       - name: Cache cargo + build artifacts
         uses: actions/cache@v4
@@ -52,7 +54,6 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            ~/.cargo/bin
             solana/target
           key: ${{ runner.os }}-anchor-${{ env.ANCHOR_VERSION }}-${{ hashFiles('solana/**/Cargo.toml') }}
           restore-keys: |
@@ -68,15 +69,9 @@ jobs:
           sh -c "$(curl -sSfL https://release.anza.xyz/v${SOLANA_VERSION}/install)"
           echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
 
-      # Build anchor-cli with the 1.79.0 toolchain from a pinned checkout so
-      # `--locked` uses Anchor's own Cargo.lock — that locks `time`/`toml_datetime`
-      # to pre-edition2024 versions which both parse and compile on 1.79.
-      - name: Install Anchor CLI ${{ env.ANCHOR_VERSION }}
+      - name: Install Anchor CLI ${{ env.ANCHOR_VERSION }} (prebuilt via npm)
         run: |
-          if ! command -v anchor >/dev/null 2>&1; then
-            git clone --depth 1 --branch v${ANCHOR_VERSION} https://github.com/coral-xyz/anchor.git "$RUNNER_TEMP/anchor"
-            cargo +1.79.0 install --path "$RUNNER_TEMP/anchor/cli" anchor-cli --locked --force
-          fi
+          npm i -g @coral-xyz/anchor-cli@${ANCHOR_VERSION}
           anchor --version
 
       - name: Solana keypair (test validator default signer)
