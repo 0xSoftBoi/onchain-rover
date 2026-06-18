@@ -8,14 +8,16 @@ Solana** implementation, branded **Clanker 5000** after ClawPump
 It is the source of truth for what has landed, what is scaffolded, and what is
 still planned — so there is zero ambiguity about real vs. aspirational.
 
-> **On the ClawPump docs.** `clawpump.tech` and `clawpump.tech/docs` are
-> client-side-rendered single-page apps; the server returns only the page
-> title/tagline and no machine-readable spec (no endpoints, program IDs,
-> account layouts, or SDK). We therefore could **not** integrate ClawPump's
-> own on-chain program/API directly — doing so would require inventing
-> identifiers. The token-launch ("pump") surface below is specified as a
-> generic SPL/PDA design and is flagged as **needs ClawPump spec** until a
-> readable interface (program ID + IDL, or an SDK/repo) is provided.
+> **On the ClawPump docs.** `clawpump.tech` is a client-side Next.js app, but
+> its `sitemap.xml` exposes `agents.clawpump.tech/{docs,guide,marketplace}` and
+> the public docs describe a concrete HTTP API: agents call **`POST /api/launch`**
+> (`{ name, symbol, image, agentId }`) and ClawPump pays the ~0.02 SOL cost to
+> deploy the token on **pump.fun**'s bonding curve (1% creator fee, split 65%
+> agent / 35% platform), with **`GET /api/fees/earnings`** for accrued fees.
+> `sidecar/src/clawpump.ts` integrates this directly. Live calls need an agent
+> API key from the login-walled dashboard; the exact request/response JSON
+> beyond the documented fields isn't public, so the client sticks to the
+> documented field set and keeps the base URL/auth configurable.
 
 ## Status legend
 
@@ -83,13 +85,13 @@ integrations have no 1:1 Solana analog and need a product decision.
 | ERC-8004 `ReputationRegistry` | Anchor reputation in the `clanker5000` program — `register_agent` / `give_feedback`, per-agent + per-feedback PDAs, running count/sum, `NewFeedback` event; self-feedback rejected | ✅ landed |
 | EventPass (ERC-721 mint on Arc) | Program-native pass record in `clanker5000` — `init_event_pass` / `mint_pass` (PDA per id, minter-gated, price recorded); `holds(who)` is an off-chain `getProgramAccounts` query (`eventPassHolds` in `solana-chain.ts`). A Metaplex NFT wrapper is the optional production upgrade. | ✅ landed |
 | `Treasury.sol` + Ledger ERC-7730 clear-sign | PDA treasury in `clanker5000` — `init_treasury` / `withdraw_treasury` (owner-gated) / `set_treasury_owner`. The sidecar never holds the owner key: `buildTreasuryWithdraw` returns the instruction for a physical Ledger Solana clear-sign. (Squads multisig is the optional upgrade.) | ✅ landed |
-| x402 + Circle/Arc (USDC-as-gas wages) | x402 has Solana support via SPL USDC; gas is SOL (no USDC-as-gas) | ⛔ planned — fee model differs |
+| x402 + Circle/Arc (USDC-as-gas wages) | `solana-x402.ts` — SPL-USDC x402 "exact" gate (`solanaPaymentGate`) drop-in for Circle's `gateway.require`; HTTP 402 + `accepts` body, then verifies a settled USDC transfer to the treasury on-chain and populates `req.payment`. Wired into `/task`, `/pilot/:robot/start`, and race-join behind `CHAIN_BACKEND=solana`. Gas is SOL (no USDC-as-gas — that Arc-specific feature has no Solana analog). | ✅ landed |
 | World ID betting gate | Keep World ID proof off-chain; store the nullifier in the `nullifier` PDA (already wired in `place_bet`) | ✅ on-chain nullifier landed; off-chain verifier reuse planned |
-| Chainlink CRE `AttestationConsumer` (Sepolia) | **Switchboard** / Chainlink Solana functions writing the verdict to an attestation PDA | ⛔ planned |
+| Chainlink CRE `AttestationConsumer` (Sepolia) | Attestation consumer in `clanker5000` — `init_attestation` / `set_forwarder` / `write_attestation` (per-job PDA keyed by job hash, threshold 70, forwarder-gated with a zero-key sim escape hatch); `getAttestation`/`isVerified` reads in `solana-chain.ts`. A Switchboard/Chainlink-Solana DON writes the verdict. | ✅ landed |
 | Privy TEE custody | Privy Solana wallets (TEE signing of Solana txs) | ⛔ planned |
 | Walrus proof storage | Unchanged — Walrus is chain-agnostic; only the on-chain hash anchor moves to the Solana program (`proof_hash` in `finish_race` / `settle_market`) | ✅ anchor field landed |
-| BigQuery ERC-8004 leaderboard | Re-point to the Solana reputation program's events / an indexer | ⛔ planned |
-| ClawPump token launch ("pump") | Generic SPL mint + bonding-curve/launch PDA | 🔌 needs ClawPump spec |
+| BigQuery ERC-8004 leaderboard | Re-pointed: `agentRanking` / `fleetReputation` in `solana-chain.ts` rank agents directly from the clanker5000 reputation accounts (count + avg via `getProgramAccounts`). A BigQuery indexer over `NewFeedback` logs remains an option for the broader ecosystem view. | ✅ landed (on-chain); ecosystem indexer optional |
+| ClawPump token launch ("pump") | `sidecar/src/clawpump.ts` — real client for ClawPump's documented API: `POST /api/launch` ({name, symbol, image, agentId}) deploys the token on pump.fun's bonding curve (ClawPump pays ~0.02 SOL; 1% creator fee, 65% agent / 35% platform); `GET /api/fees/earnings`. Wired to `/clawpump/launch`, `/clawpump/launch-winner/:id`, `/clawpump/earnings`. Live calls need an agent key (`CLAWPUMP_API_KEY`) from the login-walled dashboard. | ✅ client landed (needs agent key) |
 
 ## Why not a single big-bang rewrite
 
