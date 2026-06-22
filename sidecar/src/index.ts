@@ -529,6 +529,24 @@ app.post("/race/finish", async (req, res) => {
 // /race/finish settles on-chain via RaceMarket.settle (judge=guard) with the
 // finish proof — wired above in settle.settleRaceOnChain.
 
+// Settle RaceMarket with an EXTERNALLY-supplied proof (e.g. an agent's captured
+// finish frame already stored on Walrus). Unlike /race/finish, this does not
+// re-capture the guard photo — it anchors the (sha256, blobId) you pass.
+app.post("/race/settle", async (req, res) => {
+  try {
+    const raceId = Number(req.body?.raceId ?? onChainRaceId);
+    const winnerIdx = Number(req.body?.winnerIdx);
+    const { sha256, blobId, label } = req.body ?? {};
+    if (!process.env.RACEMARKET_ADDRESS) return res.status(400).json({ error: "RACEMARKET_ADDRESS not set" });
+    if (!Number.isInteger(raceId) || !Number.isInteger(winnerIdx))
+      return res.status(400).json({ error: "raceId and winnerIdx (int) are required" });
+    if (blobId) setProof({ blobId, sha256, label: label || `race ${raceId} winner ${winnerIdx}`, t: Date.now() });
+    const settled = await chainOp("RACE SETTLE", `race ${raceId} · winner ${winnerIdx} · proof ${(blobId||"").slice(0,10)}…`,
+      undefined, () => settle.settleRaceOnChain(raceId, winnerIdx, sha256 ?? "", blobId ?? ""));
+    res.json(settled);
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
 // Checkpoint: a robot signs a real challenge with its OWN EOA key.
 app.post("/challenge", async (req, res) => {
   try { res.json(await identity.signChallenge(req.body.robot as RobotName)); }

@@ -337,6 +337,18 @@ trait RoverControl: Send + Sync {
     fn stop(&self) -> Result<()> {
         self.drive(0.0, 0.0)
     }
+
+    /// Set the two 12V LED PWM channels, each 0.0..1.0. Waveshare ESP32 `T:132`
+    /// (CMD_LED_CTRL). Default is a no-op for robots without a light.
+    fn set_light(&self, _io4: f64, _io5: f64) -> Result<()> {
+        Ok(())
+    }
+
+    /// Aim the pan/tilt camera gimbal (degrees). Waveshare ESP32 `T:133`
+    /// (gimbal position). Default is a no-op for robots without a gimbal.
+    fn set_gimbal(&self, _pan_deg: f64, _tilt_deg: f64, _speed: f64) -> Result<()> {
+        Ok(())
+    }
 }
 
 struct SimRover;
@@ -449,6 +461,31 @@ impl RoverControl for SerialRover {
             .write_all(line.as_bytes())
             .context("write drive command")?;
         writer.flush().context("flush drive command")?;
+        Ok(())
+    }
+
+    fn set_light(&self, io4: f64, io5: f64) -> Result<()> {
+        // T:132 CMD_LED_CTRL — IO4/IO5 are 8-bit PWM (0..255).
+        let pwm = |v: f64| (clamp(v, 0.0, 1.0) * 255.0).round() as i64;
+        let line = json!({"T": 132, "IO4": pwm(io4), "IO5": pwm(io5)}).to_string() + "\n";
+        let mut writer = self.writer.lock();
+        writer
+            .write_all(line.as_bytes())
+            .context("write light command")?;
+        writer.flush().context("flush light command")?;
+        Ok(())
+    }
+
+    fn set_gimbal(&self, pan_deg: f64, tilt_deg: f64, speed: f64) -> Result<()> {
+        // T:133 gimbal position control — X/Y degrees, SPD speed, ACC acceleration.
+        let line = json!({"T": 133, "X": pan_deg, "Y": tilt_deg, "SPD": speed, "ACC": 0})
+            .to_string()
+            + "\n";
+        let mut writer = self.writer.lock();
+        writer
+            .write_all(line.as_bytes())
+            .context("write gimbal command")?;
+        writer.flush().context("flush gimbal command")?;
         Ok(())
     }
 }
@@ -683,6 +720,30 @@ struct DriveReq {
 }
 
 #[derive(Debug, Deserialize)]
+struct LightReq {
+    /// Convenience: on/off (maps to full/zero PWM on both channels).
+    on: Option<bool>,
+    /// Convenience: 0.0..1.0 brightness applied to both channels.
+    brightness: Option<f64>,
+    /// Per-channel PWM 0.0..1.0 (override `on`/`brightness`).
+    io4: Option<f64>,
+    io5: Option<f64>,
+    token: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CameraMoveReq {
+    /// Normalized aim in [-1,1] (mapped to ±range degrees).
+    pan: Option<f64>,
+    tilt: Option<f64>,
+    /// Absolute degrees (override the normalized pan/tilt).
+    pan_deg: Option<f64>,
+    tilt_deg: Option<f64>,
+    speed: Option<f64>,
+    token: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 struct WsDriveMsg {
     left: Option<f64>,
     right: Option<f64>,
@@ -849,6 +910,8 @@ async fn main() -> Result<()> {
         .route("/motors/stop", post(motors_stop))
         .route("/camera/status", get(camera_status))
         .route("/camera/snapshot", get(camera_snapshot))
+        .route("/camera/move", post(camera_move))
+        .route("/light", post(light))
         .route("/capture", post(capture))
         .route("/pilot/authorize", post(pilot_authorize))
         .route("/pilot/speed-mode", post(pilot_speed_mode))
@@ -896,6 +959,8 @@ async fn capabilities(State(state): State<AppState>) -> Json<CapabilitiesResp> {
             "GET /sensors",
             "GET /camera/status",
             "GET /camera/snapshot",
+            "POST /camera/move",
+            "POST /light",
             "POST /capture",
             "GET /stream",
             "POST /pilot/authorize",
@@ -1326,6 +1391,72 @@ async fn drive(
     Ok(Json(
         json!({"ok": true, "speed_mode": speed_mode, "max_speed": speed_mode.cap()}),
     ))
+}
+
+/// Auth gate for non-drive actuator commands (light, gimbal): require a valid
+/// pilot token unless the harness is configured to allow untokened drive.
+fn gate_token(state: &AppState, token: Option<&str>) -> Result<(), AppError> {
+    match token {
+        Some(token) => {
+            validate_session(state, token)?;
+            Ok(())
+        }
+        None if state.allow_untokened_drive => Ok(()),
+        None => Err(AppError::forbidden("pilot token is required")),
+    }
+}
+
+async fn light(
+    State(state): State<AppState>,
+    Json(req): Json<LightReq>,
+) -> Result<Json<Value>, AppError> {
+    gate_token(&state, req.token.as_deref())?;
+    let base = req
+        .brightness
+        .unwrap_or(if req.on.unwrap_or(false) { 1.0 } else { 0.0 });
+    let io4 = clamp(req.io4.unwrap_or(base), 0.0, 1.0);
+    let io5 = clamp(req.io5.unwrap_or(base), 0.0, 1.0);
+    state.rover.set_light(io4, io5)?;
+    Ok(Json(json!({"ok": true, "io4": io4, "io5": io5})))
+}
+
+async fn camera_move(
+    State(state): State<AppState>,
+    Json(req): Json<CameraMoveReq>,
+) -> Result<Json<Value>, AppError> {
+    gate_token(&state, req.token.as_deref())?;
+    // Firmware ranges (ugv_base_general gimbal_module.h::gimbalCtrlSimple):
+    // pan ∈ [-180,180], tilt ∈ [-30,90]. Normalized inputs map so 0 = level:
+    // +tilt uses the up-range (0..90), -tilt the down-range (0..-30). Absolute
+    // *_deg override the normalized form (firmware constrains either way).
+    const PAN_DEG: f64 = 180.0;
+    const TILT_UP_DEG: f64 = 90.0;
+    const TILT_DOWN_DEG: f64 = 30.0;
+    let pan_norm = clamp(req.pan.unwrap_or(0.0), -1.0, 1.0);
+    let tilt_norm = clamp(req.tilt.unwrap_or(0.0), -1.0, 1.0);
+    let tilt_from_norm = if tilt_norm >= 0.0 {
+        tilt_norm * TILT_UP_DEG
+    } else {
+        tilt_norm * TILT_DOWN_DEG
+    };
+    let pan_deg = req.pan_deg.unwrap_or(pan_norm * PAN_DEG);
+    let tilt_deg = req.tilt_deg.unwrap_or(tilt_from_norm);
+    let speed = req.speed.unwrap_or(0.0);
+
+    // Mirror the ws/camera aim state so /camera/status reflects the new aim.
+    {
+        let mut aim = state.camera_aim.lock();
+        aim.pan = clamp(pan_deg / PAN_DEG, -1.0, 1.0);
+        aim.tilt = clamp(
+            if tilt_deg >= 0.0 { tilt_deg / TILT_UP_DEG } else { tilt_deg / TILT_DOWN_DEG },
+            -1.0,
+            1.0,
+        );
+        aim.last_cmd_at = Some(Instant::now());
+        aim.active_session_id = req.token.clone();
+    }
+    state.rover.set_gimbal(pan_deg, tilt_deg, speed)?;
+    Ok(Json(json!({"ok": true, "pan_deg": pan_deg, "tilt_deg": tilt_deg, "speed": speed})))
 }
 
 async fn ws_drive(ws: WebSocketUpgrade, State(state): State<AppState>) -> Response {
